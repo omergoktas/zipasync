@@ -22,12 +22,13 @@
 
 #include <zipasync.h>
 #include <async.h>
-
 #define MINIZ_NO_ZLIB_APIS
 #define MINIZ_NO_ZLIB_COMPATIBLE_NAMES
 
 #include <miniz.h>
 #include <QFileInfo>
+#include <QDir>
+#include <QQueue>
 
 /* Define MINIZ_NO_STDIO to disable all usage and any functions which rely on stdio for file I/O. */
 /*#define MINIZ_NO_STDIO */
@@ -122,6 +123,39 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
     }
 
     //! If inputPath is a directory
+//    QList<QString> list;
+//    list.append("");
+//    for (int i = 0; i < (list.size()); ++i) {
+//        const QString& relativePath = list[i];
+//        const QString& fullPath = inputPath + '/' + relativePath;
+//        qDebug() << relativePath;
+
+//        if (QFileInfo(fullPath).isDir()) {
+//            for (const QString& subPath : QDir(fullPath).entryList(
+//                     QDir::AllEntries | QDir::System |
+//                     QDir::Hidden | QDir::NoDotAndDotDot, QDir::DirsFirst))
+//                list.append(relativePath + '/' + subPath);
+//        }
+//    }
+
+
+    QList<QString> list;
+    QQueue<QString> queue;
+    queue.enqueue("");
+    while (!queue.isEmpty()) {
+        const QString& relativePath = queue.dequeue();
+        const QString& fullPath = inputPath + '/' + relativePath;
+
+        if (QFileInfo(fullPath).isDir()) {
+            for (const QString& subPath : QDir(fullPath).entryList(
+                     QDir::AllEntries | QDir::System |
+                     QDir::Hidden | QDir::NoDotAndDotDot, QDir::DirsFirst))
+                queue.enqueue(relativePath + '/' + subPath);
+        }
+
+        list.append(relativePath);
+        qDebug() << relativePath;
+    }
 
 //    int value = QRandomGenerator::global()->bounded(rangeMin, rangeMax);
 //    for (int i = 1; i <= 100; ++i) {
