@@ -1,2 +1,3 @@
 - Add doxygen documentations
-- Add synchronous zip/unzipping option available
+- Add synchronous zipping/unzipping option available
+- Support zipping/unzipping files and folders even if their total size exceeds size of an integer variable

@@ -75,8 +75,9 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
     future->setProgressRange(0, 100);
     future->setProgressValue(0);
 
+    //! If inputPath is a file
     if (QFileInfo(inputPath).isFile()) {
-        if (nameFilters.contains(QFileInfo(inputPath).fileName())) {
+        if (nameFilters.contains(QFileInfo(inputPath).fileName(), Qt::CaseInsensitive)) {
             future->setProgressValue(100);
             future->reportResult(0);
             return 0;
@@ -119,6 +120,8 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
         future->reportResult(data.size());
         return data.size();
     }
+
+    //! If inputPath is a directory
 
 //    int value = QRandomGenerator::global()->bounded(rangeMin, rangeMax);
 //    for (int i = 1; i <= 100; ++i) {
@@ -171,11 +174,11 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
 /*!
     inputPath:
         This could be either a file or directory, but it must be exists and readable in any case. If
-        it is a directory, then all the files and folders in it will be copied into the output zip
+        it is a directory, then all the files and folders in it will be compressed into the output zip
         file. If you want all the files and folders within the directory to be placed under a root
         directory with the same name of the input directory you can use rootDirectory parameter. You
-        can also use rootDirectory parameter to specify another root directory (base path, however
-        you call) name other than the input directory name.
+        can also use rootDirectory parameter to specify another root directory name (base path or
+        however you name it) other than the input directory name.
 
     outputFilePath:
         This points out to a zip file path. If the zip file is already exists, regardless of whether
@@ -185,25 +188,28 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
         into that zip file. If either the zip file is invalid or operation fails for some reason,
         the existing zip file may also be corrupted. If the file outputFilePath parameter points out
         doesn't exist, then, regardless of the state of the append parameter, a new valid zip file
-        will be created on the disk from scratch.
+        will be created on the disk from scratch and files and folders will be compressed into it.
 
     rootDirectory:
         It is used to place files and folders under a root directory, relative to central directory
-        of a zip archive.
+        of a zip archive. If it is empty, then central directory is chosen. You could replace
+        existing files in a zip file with using rootDirectory and append parameters together.
 
     nameFilters:
-        This could be used to filter files based on their full file name, hence those files won't be
-        included into the output zip file. If it is empty, then there is no filtering occurs on zip.
+        This could be used to filter out some files based on their full file name (filename.ext)
+        hence those files won't be included into the output zip file. If it is empty, then there will
+        no such filtering occur on the zip file. Beware, this parameter is case-insensitive.
 
     compressionLevel:
         This parameter is used to specify compression hardness for the zip archive file. How hard
-        the level you choose, the compression will take longer for to finish.
+        the level you choose, the compression will take longer for to finish, but final zip file
+        will be less in size.
 
     append:
         This parameter is used to specify if file and folders are going to appended into the zip file
         that is already exists on the disk pointed out by the outputFilePath parameter. This option
         is similar to the affect of QIODevice::Append on the QFile::open function. If outputFilePath
-        parameter points out to an unexistent file, then appen option does not have any effect.
+        parameter points out to a nonexistent file, then append option does not have any effect.
 */
 
 QFuture<int> zip(const QString& inputPath, const QString& outputFilePath,
