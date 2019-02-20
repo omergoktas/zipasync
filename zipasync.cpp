@@ -22,33 +22,11 @@
 
 #include <zipasync.h>
 #include <async.h>
-#define MINIZ_NO_ZLIB_APIS
-#define MINIZ_NO_ZLIB_COMPATIBLE_NAMES
-
 #include <miniz.h>
+
 #include <QFileInfo>
 #include <QDir>
 #include <QQueue>
-
-/* Define MINIZ_NO_STDIO to disable all usage and any functions which rely on stdio for file I/O. */
-/*#define MINIZ_NO_STDIO */
-
-/* If MINIZ_NO_TIME is specified then the ZIP archive functions will not be able to get the current time, or */
-/* get/set file times, and the C run-time funcs that get/set times won't be called. */
-/* The current downside is the times written to your archives will be from 1979. */
-/*#define MINIZ_NO_TIME */
-
-/* Define MINIZ_NO_ARCHIVE_APIS to disable all ZIP archive API's. */
-/*#define MINIZ_NO_ARCHIVE_APIS */
-
-/* Define MINIZ_NO_ARCHIVE_WRITING_APIS to disable all writing related ZIP archive API's. */
-/*#define MINIZ_NO_ARCHIVE_WRITING_APIS */
-
-/* Define MINIZ_NO_MALLOC to disable all calls to malloc, free, and realloc.
-   Note if MINIZ_NO_MALLOC is defined then the user must always provide custom user alloc/free/realloc
-   callbacks to the zlib and archive API's, and a few stand-alone helper API's which don't provide custom user
-   functions (such as tdefl_compress_mem_to_heap() and tinfl_decompress_mem_to_heap()) won't work. */
-/*#define MINIZ_NO_MALLOC */
 
 namespace ZipAsync {
 
@@ -99,9 +77,9 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
         QString archivePath = QFileInfo(inputPath).fileName();
         if (!rootDirectory.isEmpty())
             archivePath.prepend(rootDirectory + '/');
-        if (archivePath.size() > 0 && (archivePath[0] == '/' || archivePath[0] == '\\'))
+        if (archivePath.size() > 0 && archivePath[0] == '/')
             archivePath.remove(0, 1);
-        if (archivePath.size() > 0 && (archivePath[0] == '/' || archivePath[0] == '\\'))
+        if (archivePath.size() > 0 && archivePath[0] == '/')
             archivePath.remove(0, 1);
         Q_ASSERT(!archivePath.isEmpty());
 
@@ -122,86 +100,67 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
         return data.size();
     }
 
+    future->setProgressValue(5);
+
     //! If inputPath is a directory
-//    QList<QString> list;
-//    list.append("");
-//    for (int i = 0; i < (list.size()); ++i) {
-//        const QString& relativePath = list[i];
-//        const QString& fullPath = inputPath + '/' + relativePath;
-//        qDebug() << relativePath;
-
-//        if (QFileInfo(fullPath).isDir()) {
-//            for (const QString& subPath : QDir(fullPath).entryList(
-//                     QDir::AllEntries | QDir::System |
-//                     QDir::Hidden | QDir::NoDotAndDotDot, QDir::DirsFirst))
-//                list.append(relativePath + '/' + subPath);
-//        }
-//    }
-
-
-    QList<QString> list;
-    QQueue<QString> queue;
-    queue.enqueue("");
-    while (!queue.isEmpty()) {
-        const QString& relativePath = queue.dequeue();
-        const QString& fullPath = inputPath + '/' + relativePath;
-
+    QVector<QString> vector({""});
+    for (int i = 0; i < vector.size(); ++i) {
+        const QString basePath = vector[i];
+        const QString& fullPath = inputPath + '/' + basePath;
         if (QFileInfo(fullPath).isDir()) {
-            for (const QString& subPath : QDir(fullPath).entryList(
+            for (const QString& entryName : QDir(fullPath).entryList(
                      QDir::AllEntries | QDir::System |
-                     QDir::Hidden | QDir::NoDotAndDotDot, QDir::DirsFirst))
-                queue.enqueue(relativePath + '/' + subPath);
+                     QDir::Hidden | QDir::NoDotAndDotDot, QDir::DirsFirst)) {
+                if (!nameFilters.contains(entryName, Qt::CaseInsensitive))
+                    vector.append(basePath + '/' + entryName);
+            }
         }
-
-        list.append(relativePath);
-        qDebug() << relativePath;
     }
 
-//    int value = QRandomGenerator::global()->bounded(rangeMin, rangeMax);
-//    for (int i = 1; i <= 100; ++i) {
-//        if (future->isPaused())
-//            future->waitForResume();
-//        if (future->isCanceled())
-//            return value;
-//        value = QRandomGenerator::global()->bounded(rangeMin, rangeMax);
-//        future->setProgressValueAndText(i, QString("Random number: %1").arg(value));
-//        QThread::msleep(50);
-//    }
+    future->setProgressValue(20);
 
+    int progress = 0;
+    int step = vector.size() / 95;
+    int size;
+    char* data;
+    mz_zip_archive zip;
+    memset(&zip, 0, sizeof(zip));
+    if (!mz_zip_writer_init_heap(&zip, 0, 0)) {
+        qWarning("ERROR 1: Something went wrong");
+        return -1;
+    }
+    for (int i = 1; i < vector.size(); ++i) {
+        QString relativePath = vector[i];
+        const QString& fullPath = inputPath + relativePath;
+        relativePath.remove(0, 1);
+        if (QFileInfo(fullPath).isDir()) {
+            relativePath += '/';
+            mz_zip_writer_add_mem(&zip, relativePath.toUtf8().constData(), nullptr, 0, 0);
+        } else {
+            mz_zip_writer_add_file(&zip, relativePath.toUtf8().constData(),
+                                   fullPath.toUtf8().constData(),
+                                   nullptr, 0, compressionLevel);
+        }
+        if (i % step == 0) {
+            if (future->isPaused())
+                future->waitForResume();
+            if (future->isCanceled())
+                return -1;
+            future->setProgressValue(++progress);
+        }
+    }
+    mz_zip_writer_finalize_heap_archive(&zip, (void**)&data, (size_t*)&size);
+    mz_zip_writer_end(&zip);
 
-//    // Spin for data
-//    for (auto file : lsfile(dir)) {
-//        auto data = rdfile(dir + separator() + file);
-//        if (!mz_zip_add_mem_to_archive_file_in_place(outFilename.toStdString().c_str(), base.isEmpty() ?
-//                                                         file.toStdString().c_str() : (base + separator() + file).toStdString().c_str(),
-//                                                         data.constData(), data.size(), NULL, 0, MZ_BEST_COMPRESSION)) {
-//            qWarning("Zipper : Error occurred 0x01");
-//            return false;
-//        }
-//    }
+    QFile file(outputFilePath);
+    if (!file.open(QIODevice::WriteOnly))
+        return -1;
+    file.write(data, size);
+    file.close();
 
-//    // Spin for dirs
-//    for (auto dr : lsdir(dir)) {
-//        #if defined(Q_OS_DARWIN)
-//        if (dr == "__MACOSX")
-//            continue;
-//        #endif
-//        if (!mz_zip_add_mem_to_archive_file_in_place(outFilename.toStdString().c_str(), base.isEmpty() ?
-//                                                         (dr + separator()).toStdString().c_str() :
-//                                                         (base + separator() + dr + separator()).toStdString().c_str(),
-//                                                         NULL, 0, NULL, 0, MZ_BEST_COMPRESSION)) {
-//            qWarning("Zipper : Error occurred 0x02");
-//            return false;
-//        }
-//        if (!compressDir(dir + separator() + dr, outFilename, base.isEmpty() ? dr : base + separator() + dr)) {
-//            return false;
-//        }
-//    }
-//    return true;
-
-
-//    future->reportResult(value);
-//    return value;
+    future->setProgressValue(100);
+    future->reportResult(size);
+    return size;
 }
 } // Internal
 
@@ -233,6 +192,7 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
         This could be used to filter out some files based on their full file name (filename.ext)
         hence those files won't be included into the output zip file. If it is empty, then there will
         no such filtering occur on the zip file. Beware, this parameter is case-insensitive.
+        Directory names could also be filtered in addition to file names.
 
     compressionLevel:
         This parameter is used to specify compression hardness for the zip archive file. How hard
