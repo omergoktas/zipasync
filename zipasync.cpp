@@ -26,7 +26,7 @@
 
 #include <QFileInfo>
 #include <QDir>
-#include <QQueue>
+#include <QDeadlineTimer>
 
 namespace ZipAsync {
 
@@ -96,35 +96,41 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
         }
 
         future->setProgressValue(100);
-        future->reportResult(data.size());
-        return data.size();
+        future->reportResult(1); // Only a file compressed
+        return 1;                // Only a file compressed
     }
-
-    future->setProgressValue(5);
 
     //! If inputPath is a directory
     QVector<QString> vector({""});
+    QDeadlineTimer deadline(200);
     for (int i = 0; i < vector.size(); ++i) {
         const QString basePath = vector[i];
         const QString& fullPath = inputPath + '/' + basePath;
         if (QFileInfo(fullPath).isDir()) {
             for (const QString& entryName : QDir(fullPath).entryList(
                      QDir::AllEntries | QDir::System |
-                     QDir::Hidden | QDir::NoDotAndDotDot, QDir::DirsFirst)) {
+                     QDir::Hidden | QDir::NoDotAndDotDot)) {
                 if (!nameFilters.contains(entryName, Qt::CaseInsensitive))
                     vector.append(basePath + '/' + entryName);
             }
         }
+        if (deadline.hasExpired()) {
+            if (future->isPaused())
+                future->waitForResume();
+            if (future->isCanceled())
+                return -1;
+            future->reportResult(vector.size());
+            deadline = QDeadlineTimer(200);
+        }
     }
 
-    future->setProgressValue(20);
-
     int progress = 0;
-    int step = vector.size() / 95;
+    int step = vector.size() / 100;
     int size;
     char* data;
     mz_zip_archive zip;
     memset(&zip, 0, sizeof(zip));
+
     if (!mz_zip_writer_init_heap(&zip, 0, 0)) {
         qWarning("ERROR 1: Something went wrong");
         return -1;
@@ -159,8 +165,8 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
     file.close();
 
     future->setProgressValue(100);
-    future->reportResult(size);
-    return size;
+    future->reportResult(vector.size());
+    return vector.size();
 }
 } // Internal
 
