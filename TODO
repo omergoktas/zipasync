@@ -1,3 +1,4 @@
 - Add doxygen documentations
 - Add synchronous zipping/unzipping option available
 - Support zipping/unzipping files and folders even if their total size exceeds size of an integer variable
+- Better error reporting with miniz error states
