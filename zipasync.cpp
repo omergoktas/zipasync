@@ -53,14 +53,15 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
     auto future = static_cast<QFutureInterface<int>*>(futureInterface);
     future->setProgressRange(0, 100);
     future->setProgressValue(0);
+    QString root(rootDirectory);
 
-    //! If inputPath is a file
     if (QFileInfo(inputPath).isFile()) {
         if (nameFilters.contains(QFileInfo(inputPath).fileName(), Qt::CaseInsensitive)) {
             future->setProgressValue(100);
             future->reportResult(0);
             return 0;
         }
+        future->setProgressValue(1);
 
         QFile file(inputPath);
         if (!file.open(QIODevice::ReadOnly)) {
@@ -77,13 +78,12 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
         future->setProgressValue(50);
 
         QString archivePath = QFileInfo(inputPath).fileName();
-        if (!rootDirectory.isEmpty())
-            archivePath.prepend(rootDirectory + '/');
-        if (archivePath.size() > 0 && archivePath[0] == '/')
-            archivePath.remove(0, 1);
-        if (archivePath.size() > 0 && archivePath[0] == '/')
-            archivePath.remove(0, 1);
-        Q_ASSERT(!archivePath.isEmpty());
+        if (!root.isEmpty()) {
+            if (root[0] == '/')
+                root.remove(0, 1);
+            if (!root.isEmpty())
+                archivePath.prepend(root + '/');
+        }
 
         if (QFileInfo::exists(outputFilePath) && !append)
             QFile::remove(outputFilePath);
@@ -99,100 +99,108 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
 
         future->setProgressValue(100);
         future->reportResult(1); // Only one file processed
-        return 1;                // Only one file processed
-    }
-
-    //! If inputPath is a directory
-    QDeadlineTimer deadline;
-    QVector<QString> vector({""});
-    for (int i = 0; i < vector.size(); ++i) {
-        const QString basePath = vector[i];
-        const QString& fullPath = inputPath + '/' + basePath;
-
-        if (QFileInfo(fullPath).isDir()) {
-            for (const QString& entryName : QDir(fullPath).entryList(
-                     QDir::AllEntries | QDir::System |
-                     QDir::Hidden | QDir::NoDotAndDotDot)) {
-                if (!nameFilters.contains(entryName, Qt::CaseInsensitive))
-                    vector.append(basePath + '/' + entryName);
+    } else {
+        QDeadlineTimer deadline; // Resolve files and folders recursively
+        QVector<QString> vector({""});
+        for (int i = 0; i < vector.size(); ++i) {
+            const QString basePath = vector[i];
+            const QString& fullPath = inputPath + basePath;
+            if (QFileInfo(fullPath).isDir()) {
+                for (const QString& entryName : QDir(fullPath).entryList(
+                         QDir::AllEntries | QDir::System |
+                         QDir::Hidden | QDir::NoDotAndDotDot)) {
+                    if (!nameFilters.contains(entryName, Qt::CaseInsensitive))
+                        vector.append(basePath + '/' + entryName);
+                }
+            }
+            if (deadline.hasExpired()) { // Report entry count in every 200ms
+                if (future->isPaused())
+                    future->waitForResume();
+                if (future->isCanceled())
+                    return -1;
+                future->reportResult(vector.size() - 1);
+                deadline = QDeadlineTimer(200);
             }
         }
 
-        // Report entry count in every 500ms
-        if (deadline.hasExpired()) {
-            if (future->isPaused())
-                future->waitForResume();
-            if (future->isCanceled())
-                return -1;
-            future->reportResult(vector.size());
-            deadline = QDeadlineTimer(500);
+        future->setProgressValue(1);
+        future->reportResult(vector.size() - 1);
+
+        mz_zip_archive zip; // Initialize the zip archive on heap
+        memset(&zip, 0, sizeof(zip));
+        if (!mz_zip_writer_init_heap(&zip, 0, 0)) {
+            qWarning("ERROR: Could not initialize memory");
+            return -1;
         }
-    }
 
-    future->setProgressValue(1);
-    future->reportResult(vector.size());
+        qreal progress = 1; // Compress files and folders into the zip archive recursively
+        qreal step = (99. - progress) / (vector.size() - 1);
+        for (int i = 1; i < vector.size(); ++i) {
+            QString archivePath(vector[i]);
+            const QString& fullPath = inputPath + archivePath;
+            if (!root.isEmpty()) {
+                if (root[0] == '/')
+                    root.remove(0, 1);
+                archivePath.prepend(root);
+                if (root.isEmpty()) {
+                    if (archivePath[0] == '/')
+                        archivePath.remove(0, 1);
+                }
+            } else {
+                if (archivePath[0] == '/')
+                    archivePath.remove(0, 1);
+            }
 
-    // Initialize the zip archive on heap
-    mz_zip_archive zip;
-    memset(&zip, 0, sizeof(zip));
-    if (!mz_zip_writer_init_heap(&zip, 0, 0)) {
-        qWarning("ERROR: Could not initialize memory");
-        return -1;
-    }
+            if (QFileInfo(fullPath).isDir()) {
+                archivePath += '/';
+                if (!mz_zip_writer_add_mem(&zip, archivePath.toUtf8().constData(), nullptr, 0, 0)) {
+                    mz_zip_writer_end(&zip);
+                    qWarning("ERROR: Could not create a directory entry for some reason, dir: %s",
+                             fullPath.toUtf8().constData());
+                    return -1;
+                }
+            } else {
+                if (!mz_zip_writer_add_file(&zip, archivePath.toUtf8().constData(),
+                                            fullPath.toUtf8().constData(),
+                                            nullptr, 0, compressionLevel)) {
+                    mz_zip_writer_end(&zip);
+                    qWarning("ERROR: Could not compress a file for some reason, file: %s",
+                             fullPath.toUtf8().constData());
+                    return -1;
+                }
+            }
+            progress += step;
+            if (future->isProgressUpdateNeeded()) {
+                if (future->isPaused())
+                    future->waitForResume();
+                if (future->isCanceled()) {
+                    mz_zip_writer_end(&zip);
+                    return -1;
+                }
+                future->setProgressValue(progress);
+            }
+        }
+        future->setProgressValue(99);
 
-    // Add files and folders into zip archive
-    int progress = 1;
-    int step = qMax(1, vector.size() / (99 - progress));
-    for (int i = 1; i < vector.size(); ++i) {
-        QString relativePath = vector[i];
-        const QString& fullPath = inputPath + relativePath;
-        relativePath.remove(0, 1);
-        if (QFileInfo(fullPath).isDir()) {
-            relativePath += '/';
-            if (!mz_zip_writer_add_mem(&zip, relativePath.toUtf8().constData(), nullptr, 0, 0)) {
-                mz_zip_writer_end(&zip);
-                qWarning("ERROR: Could not create a directory entry for some reason");
+        void* data; // Finalize the zip archive on heap
+        size_t size;
+        mz_zip_writer_finalize_heap_archive(&zip, &data, &size);
+        mz_zip_writer_end(&zip);
+
+        if (vector.size() > 1) { // Flush the zip archive from memory to file on disk
+            QFile file(outputFilePath);
+            if (!file.open(QIODevice::WriteOnly)) {
+                mz_free(data);
+                qWarning("ERROR: Could not write archive file from memory to disk");
                 return -1;
             }
-        } else {
-            if (!mz_zip_writer_add_file(&zip, relativePath.toUtf8().constData(),
-                                        fullPath.toUtf8().constData(),
-                                        nullptr, 0, compressionLevel)) {
-                mz_zip_writer_end(&zip);
-                qWarning("ERROR: Could not compress a file for some reason");
-                return -1;
-            }
+            file.write((char*)data, size);
         }
-        if (i % step == 0 && progress < 100) {
-            if (future->isPaused())
-                future->waitForResume();
-            if (future->isCanceled()) {
-                mz_zip_writer_end(&zip);
-                return -1;
-            }
-            future->setProgressValue(++progress);
-        }
-    }
-
-    // Finalize the zip archive on heap
-    int size;
-    char* data;
-    mz_zip_writer_finalize_heap_archive(&zip, (void**)&data, (size_t*)&size);
-    mz_zip_writer_end(&zip);
-
-    // Flush the zip archive from memory to file on disk
-    QFile file(outputFilePath);
-    if (!file.open(QIODevice::WriteOnly)) {
         mz_free(data);
-        qWarning("ERROR: Could not write archive file from memory to disk");
-        return -1;
-    }
-    file.write(data, size);
-    file.close();
-    mz_free(data);
 
-    future->setProgressValue(100);
-    return vector.size();
+        future->setProgressValue(100);
+    }
+    return 0; // Ignored
 }
 } // Internal
 
@@ -239,8 +247,8 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
 */
 
 QFuture<int> zip(const QString& inputPath, const QString& outputFilePath,
-                    const QString& rootDirectory, const QStringList& nameFilters,
-                    CompressionLevel compressionLevel, bool append)
+                 const QString& rootDirectory, const QStringList& nameFilters,
+                 CompressionLevel compressionLevel, bool append)
 {
     if (!QFileInfo::exists(inputPath)) {
         qWarning("WARNING: The input path doesn not exist");

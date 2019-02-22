@@ -1,4 +1,10 @@
 - Add doxygen documentations
 - Add synchronous zipping/unzipping option available
-- Support zipping/unzipping files and folders even if their total size exceeds size of an integer variable
-- Better error reporting with miniz error states
+- Support zipping/unzipping files and folders even if their total size
+  exceeds size of an integer variable or ram of the computer. To support
+  that, may we need to flush archive parts from memory to disk gradually
+  before waiting compression on all the files to finish.
+- Add better error reporting support -- we may use miniz error states
+- Improve progress reporting, i.e we should be able to report progress
+  for a big chunk of a file, progress reporting should be interrupted
+  less frequently
