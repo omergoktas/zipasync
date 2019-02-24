@@ -8,3 +8,6 @@
 - Improve progress reporting, i.e we should be able to report progress
   for a big chunk of a file, progress reporting should be interrupted
   less frequently
+- Split up compression task into multiple parts and assign each
+  individual part into a processor core. Provide better multi-core
+  asynchronous compression support.
