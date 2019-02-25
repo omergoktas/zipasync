@@ -25,6 +25,7 @@
 
 #include <zipasync_global.h>
 #include <QFuture>
+#include <QDir>
 
 namespace ZipAsync {
 
@@ -40,7 +41,7 @@ enum CompressionLevel {
 
 QFuture<int> zip(const QString& inputPath, const QString& outputFilePath,
                  const QString& rootDirectory, const QStringList& nameFilters,
-                 CompressionLevel compressionLevel, bool append);
+                 QDir::Filters filters, CompressionLevel compressionLevel, bool append);
 
 QFuture<int> unzip(const QString& inputPath, const QString& outputPath);
 } // ZipAsync

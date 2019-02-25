@@ -47,20 +47,18 @@ QFuture<int> invalidFuture()
 }
 
 int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
-        const QString& outputFilePath, const QString& rootDirectory,
-        const QStringList& nameFilters, CompressionLevel compressionLevel, bool append)
+        const QString& outputFilePath, const QString& rootDirectory, const QStringList& nameFilters,
+        QDir::Filters filters, CompressionLevel compressionLevel, bool append)
 {
     auto future = static_cast<QFutureInterface<int>*>(futureInterface);
     future->setProgressRange(0, 100);
     future->setProgressValue(0);
     QString root(rootDirectory);
 
+    if (filters == QDir::NoFilter)
+        filters = QDir::AllEntries | QDir::System | QDir::Hidden | QDir::NoDotAndDotDot;
+
     if (QFileInfo(inputPath).isFile()) {
-        if (nameFilters.contains(QFileInfo(inputPath).fileName(), Qt::CaseInsensitive)) {
-            future->setProgressValue(100);
-            future->reportResult(0);
-            return 0;
-        }
         future->setProgressValue(1);
 
         QFile file(inputPath);
@@ -107,9 +105,7 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
             const QString& fullPath = inputPath + basePath;
             if (QFileInfo(fullPath).isDir()) {
                 for (const QString& entryName : QDir(fullPath).entryList(
-                         QDir::AllEntries | QDir::System |
-                         QDir::Hidden | QDir::NoDotAndDotDot)) {
-                    if (!nameFilters.contains(entryName, Qt::CaseInsensitive))
+                         nameFilters, filters, QDir::DirsLast | QDir::IgnoreCase)) {
                         vector.append(basePath + '/' + entryName);
                 }
             }
@@ -285,8 +281,17 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
     nameFilters:
         This could be used to filter out some files based on their full file name (filename.ext)
         hence those files won't be included into the output zip file. If it is empty, then there will
-        no such filtering occur on the zip file. Beware, this parameter is case-insensitive.
-        Directory names could also be filtered in addition to file names.
+        no such filtering occur on the zip file. Directory names could also be filtered in addition
+        to file names. Each name filter is a wildcard (globbing) filter that understands * and ?
+        wildcards. See QRegularExpression Wildcard Matching. For example, the following code sets
+        three name filters on a QDir to ensure that only files with extensions typically used for
+        C++ source files are listed: "*.cpp", "*.cxx", "*.cc". Only works when inputPath is a dir.
+
+    filters:
+        The filter is used to specify the kind of files that should be zipped. This filter flags
+        only works when inputPath is a dir and it is used to resolve dirs and files recursively under
+        a directory (when the inputPath points out a directory). With this flag, for instance, you
+        can filter out hidden files and not include them in a zip file.
 
     compressionLevel:
         This parameter is used to specify compression hardness for the zip archive file. How hard
@@ -302,7 +307,7 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
 
 QFuture<int> zip(const QString& inputPath, const QString& outputFilePath,
                  const QString& rootDirectory, const QStringList& nameFilters,
-                 CompressionLevel compressionLevel, bool append)
+                 QDir::Filters filters, CompressionLevel compressionLevel, bool append)
 {
     if (!QFileInfo::exists(inputPath)) {
         qWarning("WARNING: The input path doesn not exist");
@@ -330,7 +335,7 @@ QFuture<int> zip(const QString& inputPath, const QString& outputFilePath,
         QFile::remove(outputFilePath);
 
     return Async::run(Internal::zip, inputPath, outputFilePath,
-                      rootDirectory, nameFilters, compressionLevel, append);
+                      rootDirectory, nameFilters, filters, compressionLevel, append);
 }
 
 QFuture<int> unzip(const QString& inputPath, const QString& outputPath)
