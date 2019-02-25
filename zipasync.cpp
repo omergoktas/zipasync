@@ -56,7 +56,7 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
     QString root(rootDirectory);
 
     if (filters == QDir::NoFilter)
-        filters = QDir::AllEntries | QDir::System | QDir::Hidden | QDir::NoDotAndDotDot;
+        filters = QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot;
 
     if (QFileInfo(inputPath).isFile()) {
         future->setProgressValue(1);
@@ -73,7 +73,7 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
             future->waitForResume();
         if (future->isCanceled())
             return -1;
-        future->setProgressValue(50);
+        future->setProgressValue(30);
 
         QString archivePath = QFileInfo(inputPath).fileName();
         if (!root.isEmpty()) {
