@@ -44,7 +44,7 @@ QFuture<int> zip(const QString& inputPath, const QString& outputFilePath,
                  QDir::Filters filters = QDir::NoFilter, CompressionLevel compressionLevel = Medium,
                  bool append = true);
 
-QFuture<int> unzip(const QString& inputPath, const QString& outputPath);
+QFuture<int> unzip(const QString& inputFilePath, const QString& outputPath, bool overwrite = false);
 } // ZipAsync
 
 #endif // ZIPASYNC_H

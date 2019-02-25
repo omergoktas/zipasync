@@ -55,9 +55,6 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
     future->setProgressValue(0);
     QString root(rootDirectory);
 
-    if (filters == QDir::NoFilter)
-        filters = QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot;
-
     if (QFileInfo(inputPath).isFile()) {
         future->setProgressValue(1);
 
@@ -252,6 +249,54 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
     }
     return 0; // Ignored
 }
+
+int unzip(QFutureInterfaceBase* futureInterface, const QString& inputFilePath,
+          const QString& outputPath, bool overwrite)
+{
+    mz_zip_archive zip;
+    memset(&zip, 0, sizeof(zip));
+    if (!mz_zip_reader_init_mem(&zip, zipData.constData(), zipData.size(), 0)) {
+        qWarning("Zipper : Error occurred 0x03");
+        return false;
+    }
+
+    // Spin for dirs
+    bool existsChecked = false;
+    for (int i = 0; i < (int)mz_zip_reader_get_num_files(&zip); i++) {
+        mz_zip_archive_file_stat file_stat;
+        if (!mz_zip_reader_file_stat(&zip, i, &file_stat)) {
+            qWarning("Zipper : Error occurred 0x04");
+            return false;
+        }
+        if (mz_zip_reader_is_file_a_directory(&zip, i)) {
+            if (!existsChecked && exists(path + separator() + file_stat.m_filename)) {
+                qWarning() << "Extraction cancelled : Dir exists!";
+                return false;
+            }
+            existsChecked = true;
+            QDir(path).mkpath(file_stat.m_filename);
+        }
+    }
+
+    // Spin for data
+    for (int i = 0; i < (int)mz_zip_reader_get_num_files(&zip); i++) {
+        mz_zip_archive_file_stat file_stat;
+        if (!mz_zip_reader_file_stat(&zip, i, &file_stat)) {
+            qWarning("Zipper : Error occurred 0x05");
+            return false;
+        }
+        if (!mz_zip_reader_is_file_a_directory(&zip, i)) {
+            if (!mz_zip_reader_extract_to_file(&zip, i, QString(path + separator() + file_stat.m_filename).toStdString().c_str(), 0)) {
+                qWarning("Zipper : Error occurred 0x06");
+                return false;
+            }
+        }
+    }
+
+    // Close the archive, freeing any resources it was using
+    mz_zip_reader_end(&zip);
+    return true;
+}
 } // Internal
 
 /*!
@@ -285,11 +330,11 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
         to file names. Each name filter is a wildcard (globbing) filter that understands * and ?
         wildcards. See QRegularExpression Wildcard Matching. For example, the following code sets
         three name filters on a QDir to ensure that only files with extensions typically used for
-        C++ source files are listed: "*.cpp", "*.cxx", "*.cc". Only works when inputPath is a dir.
+        C++ source files are listed: "*.cpp", "*.cxx", "*.cc". Only valid when inputPath is a dir.
 
     filters:
         The filter is used to specify the kind of files that should be zipped. This filter flags
-        only works when inputPath is a dir and it is used to resolve dirs and files recursively under
+        only valid when inputPath is a dir and it is used to resolve dirs and files recursively under
         a directory (when the inputPath points out a directory). With this flag, for instance, you
         can filter out hidden files and not include them in a zip file.
 
@@ -310,7 +355,7 @@ QFuture<int> zip(const QString& inputPath, const QString& outputFilePath,
                  QDir::Filters filters, CompressionLevel compressionLevel, bool append)
 {
     if (!QFileInfo::exists(inputPath)) {
-        qWarning("WARNING: The input path doesn not exist");
+        qWarning("WARNING: The input path does not exist");
         return Internal::invalidFuture();
     }
 
@@ -334,12 +379,45 @@ QFuture<int> zip(const QString& inputPath, const QString& outputFilePath,
     if (!outputFilePathExists)
         QFile::remove(outputFilePath);
 
+    if (filters == QDir::NoFilter)
+        filters = QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot;
+
     return Async::run(Internal::zip, inputPath, outputFilePath,
                       rootDirectory, nameFilters, filters, compressionLevel, append);
 }
 
-QFuture<int> unzip(const QString& inputPath, const QString& outputPath)
+QFuture<int> unzip(const QString& inputFilePath, const QString& outputPath, bool overwrite)
 {
+    if (!QFileInfo::exists(inputFilePath)) {
+        qWarning("WARNING: The input file path does not exist");
+        return Internal::invalidFuture();
+    }
 
+    if (QFileInfo(inputFilePath).isDir()) {
+        qWarning("WARNING: The input file path cannot be a directory");
+        return Internal::invalidFuture();
+    }
+
+    if (!QFileInfo(inputFilePath).isReadable()) {
+        qWarning("WARNING: The input file path is not readable");
+        return Internal::invalidFuture();
+    }
+
+    if (!QFileInfo::exists(outputPath)) {
+        qWarning("WARNING: The output path does not exist");
+        return Internal::invalidFuture();
+    }
+
+    if (!QFileInfo(outputPath).isDir()) {
+        qWarning("WARNING: The output path cannot be a file");
+        return Internal::invalidFuture();
+    }
+
+    if (!QFileInfo(outputPath).isWritable()) {
+        qWarning("WARNING: The output path is not writable");
+        return Internal::invalidFuture();
+    }
+
+    return Async::run(Internal::unzip, inputFilePath, outputPath, overwrite);
 }
 } // ZipAsync
