@@ -286,10 +286,14 @@ int unzip(QFutureInterfaceBase* futureInterface, const QString& inputFilePath,
             return -1;
         }
         if (fileStat.m_is_directory) {
-            if (!overwrite && QFileInfo::exists(outputPath + '/' + fileStat.m_filename)) {
-                mz_zip_reader_end(&zip);
-                qWarning("WARNING: Operation cancelled, dir already exists");
-                return -1;
+            if (!overwrite) {
+                QDir target(outputPath + '/' + fileStat.m_filename); target.cdUp();
+                const bool isBase = target == QDir(outputPath);
+                if (isBase && QFileInfo::exists(outputPath + '/' + fileStat.m_filename)) {
+                    mz_zip_reader_end(&zip);
+                    qWarning("WARNING: Operation cancelled, dir already exists");
+                    return -1;
+                }
             }
             QDir(outputPath).mkpath(fileStat.m_filename);
             processedEntryCount++;
