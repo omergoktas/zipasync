@@ -293,6 +293,13 @@ int unzip(QFutureInterfaceBase* futureInterface, const QString& inputFilePath,
             }
             QDir(outputPath).mkpath(fileStat.m_filename);
             processedEntryCount++;
+            if (future->isProgressUpdateNeeded()) {
+                if (future->isPaused())
+                    future->waitForResume();
+                if (future->isCanceled())
+                    return -1;
+                future->setProgressValue(100 * processedEntryCount / numberOfFiles);
+            }
         }
     }
 
@@ -323,11 +330,19 @@ int unzip(QFutureInterfaceBase* futureInterface, const QString& inputFilePath,
                 return -1;
             }
             processedEntryCount++;
+            if (future->isProgressUpdateNeeded()) {
+                if (future->isPaused())
+                    future->waitForResume();
+                if (future->isCanceled())
+                    return -1;
+                future->setProgressValue(100 * processedEntryCount / numberOfFiles);
+            }
         }
     }
-
-    // Close the archive, freeing any resources it was using
     mz_zip_reader_end(&zip);
+
+    future->setProgressValue(100);
+    future->reportResult(processedEntryCount);
     return processedEntryCount;
 }
 } // Internal
