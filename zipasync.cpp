@@ -253,49 +253,82 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
 int unzip(QFutureInterfaceBase* futureInterface, const QString& inputFilePath,
           const QString& outputPath, bool overwrite)
 {
+    auto future = static_cast<QFutureInterface<int>*>(futureInterface);
+    future->setProgressRange(0, 100);
+    future->setProgressValue(0);
+
     mz_zip_archive zip;
     memset(&zip, 0, sizeof(zip));
-    if (!mz_zip_reader_init_mem(&zip, zipData.constData(), zipData.size(), 0)) {
-        qWarning("Zipper : Error occurred 0x03");
-        return false;
+    if (!mz_zip_reader_init_file_v2(&zip, inputFilePath.toUtf8().constData(), 0, 0, 0)) {
+        qWarning("ERROR: Could not initialize zip reader");
+        return -1;
     }
 
-    // Spin for dirs
-    bool existsChecked = false;
-    for (int i = 0; i < (int)mz_zip_reader_get_num_files(&zip); i++) {
-        mz_zip_archive_file_stat file_stat;
-        if (!mz_zip_reader_file_stat(&zip, i, &file_stat)) {
-            qWarning("Zipper : Error occurred 0x04");
-            return false;
+    mz_uint processedEntryCount = 0;
+    mz_uint numberOfFiles = mz_zip_reader_get_num_files(&zip);
+
+    if (numberOfFiles <= 0) {
+        mz_zip_reader_end(&zip);
+        return 0;
+    }
+
+    // Iterate for dirs
+    for (mz_uint i = 0; i < numberOfFiles; ++i) {
+        mz_zip_archive_file_stat fileStat;
+        if (!mz_zip_reader_file_stat(&zip, i, &fileStat)) {
+            mz_zip_reader_end(&zip);
+            qWarning("ERROR: Archive file is broken");
+            return -1;
         }
-        if (mz_zip_reader_is_file_a_directory(&zip, i)) {
-            if (!existsChecked && exists(path + separator() + file_stat.m_filename)) {
-                qWarning() << "Extraction cancelled : Dir exists!";
-                return false;
+        if (!fileStat.m_is_supported) {
+            mz_zip_reader_end(&zip);
+            qWarning("ERROR: Archive file is not supported");
+            return -1;
+        }
+        if (fileStat.m_is_directory) {
+            if (!overwrite && QFileInfo::exists(outputPath + '/' + fileStat.m_filename)) {
+                mz_zip_reader_end(&zip);
+                qWarning("WARNING: Operation cancelled, dir already exists");
+                return -1;
             }
-            existsChecked = true;
-            QDir(path).mkpath(file_stat.m_filename);
+            QDir(outputPath).mkpath(fileStat.m_filename);
+            processedEntryCount++;
         }
     }
 
-    // Spin for data
-    for (int i = 0; i < (int)mz_zip_reader_get_num_files(&zip); i++) {
-        mz_zip_archive_file_stat file_stat;
-        if (!mz_zip_reader_file_stat(&zip, i, &file_stat)) {
-            qWarning("Zipper : Error occurred 0x05");
-            return false;
+    // Iterate for files
+    for (mz_uint i = 0; i < numberOfFiles; ++i) {
+        mz_zip_archive_file_stat fileStat;
+        if (!mz_zip_reader_file_stat(&zip, i, &fileStat)) {
+            mz_zip_reader_end(&zip);
+            qWarning("ERROR: Archive file is broken");
+            return -1;
         }
-        if (!mz_zip_reader_is_file_a_directory(&zip, i)) {
-            if (!mz_zip_reader_extract_to_file(&zip, i, QString(path + separator() + file_stat.m_filename).toStdString().c_str(), 0)) {
-                qWarning("Zipper : Error occurred 0x06");
-                return false;
+        if (!fileStat.m_is_supported) {
+            mz_zip_reader_end(&zip);
+            qWarning("ERROR: Archive file is not supported");
+            return -1;
+        }
+        if (!fileStat.m_is_directory) {
+            if (!overwrite && QFileInfo::exists(outputPath + '/' + fileStat.m_filename)) {
+                mz_zip_reader_end(&zip);
+                qWarning("WARNING: Operation cancelled, file already exists");
+                return -1;
             }
+            if (!mz_zip_reader_extract_to_file(
+                        &zip, i, (outputPath + '/' + fileStat.m_filename).toUtf8().constData(),
+                        0)) {
+                mz_zip_reader_end(&zip);
+                qWarning("ERROR: Extraction failed, file name: %s", fileStat.m_filename);
+                return -1;
+            }
+            processedEntryCount++;
         }
     }
 
     // Close the archive, freeing any resources it was using
     mz_zip_reader_end(&zip);
-    return true;
+    return processedEntryCount;
 }
 } // Internal
 
