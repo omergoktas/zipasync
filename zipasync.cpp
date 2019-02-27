@@ -28,6 +28,40 @@
 #include <QDir>
 #include <QDeadlineTimer>
 
+#define REPORT_PROGRESS(progress) \
+{ \
+    if (future->isProgressUpdateNeeded()) { \
+        if (future->isPaused()) \
+            future->waitForResume(); \
+        if (future->isCanceled()) \
+            return -1; \
+        future->setProgressValue(progress); \
+    } \
+}
+
+#define REPORT_RESULT(progress, result) \
+{ \
+    future->setProgressValue(progress); \
+    future->reportResult(result); \
+    return result; \
+}
+
+#define REPORT_ERROR(msg) \
+{ \
+    future->setProgressValueAndText(100, QT_TRANSLATE_NOOP("ZipAsync", msg)); \
+    future->reportResult(-1); \
+    return -1; \
+}
+
+#define REPORT_ERROR_ARG(msg, ...) \
+{ \
+    char buffer[200]; \
+    sprintf(buffer, QT_TRANSLATE_NOOP("ZipAsync", msg), __VA_ARGS__); \
+    future->setProgressValueAndText(100, buffer); \
+    future->reportResult(-1); \
+    return -1; \
+}
+
 namespace ZipAsync {
 
 namespace Internal {
@@ -40,9 +74,8 @@ bool touch(const QString& filePath)
 
 QFuture<int> invalidFuture()
 {
-    static const int invalidResult = -1;
     static QFutureInterface<int> future;
-    future.reportFinished(&invalidResult);
+    future.reportCanceled();
     return future.future();
 }
 
@@ -103,7 +136,7 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
             if (QFileInfo(fullPath).isDir()) {
                 for (const QString& entryName : QDir(fullPath).entryList(
                          nameFilters, filters, QDir::DirsLast | QDir::IgnoreCase)) {
-                        vector.append(basePath + '/' + entryName);
+                    vector.append(basePath + '/' + entryName);
                 }
             }
             if (deadline.hasExpired()) { // Report entry count in every 200ms
@@ -259,17 +292,15 @@ int unzip(QFutureInterfaceBase* futureInterface, const QString& inputFilePath,
 
     mz_zip_archive zip;
     memset(&zip, 0, sizeof(zip));
-    if (!mz_zip_reader_init_file_v2(&zip, inputFilePath.toUtf8().constData(), 0, 0, 0)) {
-        qWarning("ERROR: Could not initialize zip reader");
-        return -1;
-    }
+    if (!mz_zip_reader_init_file_v2(&zip, inputFilePath.toUtf8().constData(), 0, 0, 0))
+        REPORT_ERROR("Could not initialize the zip reader.")
 
     mz_uint processedEntryCount = 0;
     mz_uint numberOfFiles = mz_zip_reader_get_num_files(&zip);
 
     if (numberOfFiles <= 0) {
         mz_zip_reader_end(&zip);
-        return 0;
+        REPORT_ERROR("Archive is either invalid or empty.")
     }
 
     // Iterate for dirs
@@ -277,13 +308,11 @@ int unzip(QFutureInterfaceBase* futureInterface, const QString& inputFilePath,
         mz_zip_archive_file_stat fileStat;
         if (!mz_zip_reader_file_stat(&zip, i, &fileStat)) {
             mz_zip_reader_end(&zip);
-            qWarning("ERROR: Archive file is broken");
-            return -1;
+            REPORT_ERROR("Archive file is broken.")
         }
         if (!fileStat.m_is_supported) {
             mz_zip_reader_end(&zip);
-            qWarning("ERROR: Archive file is not supported");
-            return -1;
+            REPORT_ERROR("Archive file is not supported.")
         }
         if (fileStat.m_is_directory) {
             if (!overwrite) {
@@ -291,19 +320,12 @@ int unzip(QFutureInterfaceBase* futureInterface, const QString& inputFilePath,
                 const bool isBase = target == QDir(outputPath);
                 if (isBase && QFileInfo::exists(outputPath + '/' + fileStat.m_filename)) {
                     mz_zip_reader_end(&zip);
-                    qWarning("WARNING: Operation cancelled, dir already exists");
-                    return -1;
+                    REPORT_ERROR("Operation canceled, dir already exists.")
                 }
             }
             QDir(outputPath).mkpath(fileStat.m_filename);
             processedEntryCount++;
-            if (future->isProgressUpdateNeeded()) {
-                if (future->isPaused())
-                    future->waitForResume();
-                if (future->isCanceled())
-                    return -1;
-                future->setProgressValue(100 * processedEntryCount / numberOfFiles);
-            }
+            REPORT_PROGRESS(100 * processedEntryCount / numberOfFiles)
         }
     }
 
@@ -312,42 +334,29 @@ int unzip(QFutureInterfaceBase* futureInterface, const QString& inputFilePath,
         mz_zip_archive_file_stat fileStat;
         if (!mz_zip_reader_file_stat(&zip, i, &fileStat)) {
             mz_zip_reader_end(&zip);
-            qWarning("ERROR: Archive file is broken");
-            return -1;
+            REPORT_ERROR("Archive file is broken.")
         }
         if (!fileStat.m_is_supported) {
             mz_zip_reader_end(&zip);
-            qWarning("ERROR: Archive file is not supported");
-            return -1;
+            REPORT_ERROR("Archive file is not supported.")
         }
         if (!fileStat.m_is_directory) {
             if (!overwrite && QFileInfo::exists(outputPath + '/' + fileStat.m_filename)) {
                 mz_zip_reader_end(&zip);
-                qWarning("WARNING: Operation cancelled, file already exists");
-                return -1;
+                REPORT_ERROR("Operation canceled, file already exists.")
             }
             if (!mz_zip_reader_extract_to_file(
                         &zip, i, (outputPath + '/' + fileStat.m_filename).toUtf8().constData(),
                         0)) {
                 mz_zip_reader_end(&zip);
-                qWarning("ERROR: Extraction failed, file name: %s", fileStat.m_filename);
-                return -1;
+                REPORT_ERROR_ARG("Extraction failed, file: %s.", fileStat.m_filename)
             }
             processedEntryCount++;
-            if (future->isProgressUpdateNeeded()) {
-                if (future->isPaused())
-                    future->waitForResume();
-                if (future->isCanceled())
-                    return -1;
-                future->setProgressValue(100 * processedEntryCount / numberOfFiles);
-            }
+            REPORT_PROGRESS(100 * processedEntryCount / numberOfFiles)
         }
     }
     mz_zip_reader_end(&zip);
-
-    future->setProgressValue(100);
-    future->reportResult(processedEntryCount);
-    return processedEntryCount;
+    REPORT_RESULT(100, processedEntryCount)
 }
 } // Internal
 
@@ -438,6 +447,28 @@ QFuture<int> zip(const QString& inputPath, const QString& outputFilePath,
                       rootDirectory, nameFilters, filters, compressionLevel, append);
 }
 
+/*!
+    Summary:
+        This function extracts the zip archive given by inputFilePath into the directory given by
+        outputPath. If the function fails for some reason, even before spawning a separate worker
+        thread, then it returns an invalid future (in "canceled" state) in the first place. If the
+        worker thread is spawned and it has failed, then the future returned by this function will
+        emit resultReadyAt signal (via QFutureWatcher) with -1 as the result.
+
+    inputFilePath:
+        This points out to a zip archive file path where all the content of this zip archive is going
+        to be extracted into the output path. And the zip archive must be exists and valid. Otherwise
+        extraction may fail at any point and -1 is reported as the result.
+
+    outputPath:
+        Output path must be a directory. It is the folder where all the content of the root directory
+        of the input zip archive is going to be poured into directly.
+
+    overwrite:
+        If this parameter is enabled, then all the files and folders are going to be overwritten even
+        if they exists. Otherwise, extraction operation is canceled at any point if any file in the
+        input zip archive is already exists on the disk.
+*/
 QFuture<int> unzip(const QString& inputFilePath, const QString& outputPath, bool overwrite)
 {
     if (!QFileInfo::exists(inputFilePath)) {
