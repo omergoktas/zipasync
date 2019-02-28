@@ -198,8 +198,12 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& sourcePath,
         const QString basePath = vector[i];
         const QString& fullPath = sourcePath + basePath;
         if (QFileInfo(fullPath).isDir()) {
-            for (const QString& entryName : QDir(fullPath).entryList(
-                     nameFilters, filters/*, QDir::DirsLast | QDir::IgnoreCase*/)) {
+            for (const QString& entryName : QDir(fullPath).entryList({}, filters)) {
+                if (!nameFilters.isEmpty()
+                        && QFileInfo(fullPath + '/' + entryName).isFile()
+                        && QDir::match(nameFilters, entryName)) {
+                    continue;
+                }
                 vector.append(basePath + '/' + entryName);
             }
         }
@@ -457,8 +461,8 @@ int unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath,
     nameFilters:
         This could be used to filter out some files based on their full file name (filename.ext)
         hence those files won't be included in the zip file. If it is empty, then there will
-        no such filtering occur on the zip file. Directory names could also be filtered in addition
-        to file names. Each name filter is a wildcard (globbing) filter that understands * and ?
+        no such filtering occur on the zip file. Directory names could not be filtered, only file
+        names could be. Each name filter is a wildcard (globbing) filter that understands * and ?
         wildcards. See QRegularExpression Wildcard Matching. For example, the following snippets set
         three name filters on the zip funtion to ensure that files with extensions typically used
         for C++ source files aren't going to be included in the final zip archive: "*.cpp", "*.cxx",
