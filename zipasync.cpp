@@ -86,7 +86,7 @@
 #define RETURN_ERROR_ARG(msg, ...) \
 { \
     future->setProgressValueAndText(100, \
-        Internal::combineErrorString(QT_TRANSLATE_NOOP("ZipAsync", msg), __VA_ARGS__)); \
+        Internal::combineStringArguments(QT_TRANSLATE_NOOP("ZipAsync", msg), __VA_ARGS__)); \
     future->reportResult(-1); \
     return -1; \
 }
@@ -107,21 +107,35 @@ QFuture<int> invalidFuture()
     return future.future();
 }
 
-void combineErrorString(QString& msg) {}
+void combineStringArguments(QString&) {}
 
 template <typename First, typename... Rest>
-void combineErrorString(QString& msg, First&& first, Rest&&... rest)
+void combineStringArguments(QString& msg, First&& first, Rest&&... rest)
 {
     msg = msg.arg(first);
-    combineErrorString(msg, rest...);
+    combineStringArguments(msg, rest...);
 }
 
 template <typename... Args>
-QString combineErrorString(const char* msg, Args&&... args)
+QString combineStringArguments(const char* msg, Args&&... args)
 {
     QString errorString(msg);
-    combineErrorString(errorString, args...);
+    combineStringArguments(errorString, args...);
     return errorString;
+}
+
+QByteArray cleanArchivePath(const QString& rootDirectory, const QString& relativePath)
+{
+    Q_ASSERT(!relativePath.isEmpty());
+    QString archivePath(relativePath);
+    if (!rootDirectory.isEmpty()) {
+        QString root(rootDirectory);
+        if (root[0] == '/')
+            root.remove(0, 1);
+        if (!root.isEmpty())
+            archivePath.prepend(root + '/');
+    }
+    return archivePath.toUtf8();
 }
 
 QByteArray cleanArchivePath(const QString& rootDirectory, const QString& relativePath, bool isDir)
@@ -143,20 +157,6 @@ QByteArray cleanArchivePath(const QString& rootDirectory, const QString& relativ
     }
     if (isDir)
         archivePath += '/';
-    return archivePath.toUtf8();
-}
-
-QByteArray cleanArchivePath(const QString& rootDirectory, const QString& relativePath)
-{
-    Q_ASSERT(!relativePath.isEmpty());
-    QString archivePath(relativePath);
-    if (!rootDirectory.isEmpty()) {
-        QString root(rootDirectory);
-        if (root[0] == '/')
-            root.remove(0, 1);
-        if (!root.isEmpty())
-            archivePath.prepend(root + '/');
-    }
     return archivePath.toUtf8();
 }
 
@@ -359,6 +359,39 @@ int unzip(QFutureInterfaceBase* futureInterface, const QString& inputFilePath,
 } // Internal
 
 /*!
+    Summary:
+        This function compresses, depending on the inputPath, the file or recursive content of the
+        directory given by inputPath into the zip archive file given by outputFilePath. You can use
+        append parameter if you want, to extend (or overwrite) the content of an existing zip file
+        at the destination where inputPath points out. You can use the rootDirectory parameter if
+        you want, to put all the input resources (files and folders) into a relative root directory
+        under the central directory of a zip archive. Also you can use nameFilters and filters
+        parameters when the inputPath points out to a directory, in order to specify what kind of
+        files and folders recursively will be scanned and which one of them will be added into the
+        final zip archive. On the other hand, compressionLevel parameter could be used to specify
+        compression hardness for the zip archive.
+
+        If the function fails for some reason, before spawning a separate worker thread, then it
+        returns an invalid future (in "canceled" state) in the first place. If the worker thread is
+        spawned and the zip operation has failed for some reason, then the future returned by this
+        function will emit resultReadyAt signal (via QFutureWatcher) with -1 as the result. Also
+        progress will be set to 100 and progress text will be set to the appropriate error string.
+        So you can catch those error states via QFutureWatcher's progressTextChanged and
+        progressValueChanged signals. You can also translate the error string by passing it to a
+        QObject::tr() function.
+
+        While the operation is still in progress, the progressValueChanged signal is emit almost 25
+        times per second with the appropriate progress values of the ongoing operation and the
+        progress range for the operation is between 0 and 100. When the operation is finished, the
+        resultReadyAt signal is emitted with a single result that is the total number of entries
+        extracted from the zip archive. Overall, this function only returns a single result, either
+        it is -1 for errors, or the total number of entries extracted from the zip archive if it is
+        successful. Also the finished signal is emit at the end.
+
+        Other facilities, like pause/resume and cancel these are provided by the QFuture mechanism
+        may also be used at any arbitrary point in operation's life time in order to pause/resume or
+        cancel the operation. Appropriate signals will also be emit.
+
     inputPath:
         This could be either a file or directory, but it must be exists and readable in any case. If
         it is a directory, then all the files and folders in it will be compressed into the output zip
@@ -378,9 +411,14 @@ int unzip(QFutureInterfaceBase* futureInterface, const QString& inputFilePath,
         will be created on the disk from scratch and files and folders will be compressed into it.
 
     rootDirectory:
-        It is used to place files and folders under a root directory, relative to central directory
-        of a zip archive. If it is empty, then central directory is chosen. You could replace
-        existing files in a zip file with using rootDirectory and append parameters together.
+        It is used to place files and folders under a root directory, relative to the central
+        directory of a zip archive. If it is empty, then the central directory of the zip archive is
+        chosen. This parameter may be like "/my/relative/path" or "/my/relative/path/" or
+        "my/relative/path", or "my/relative/path/". Hence, all the files and folders that inputPath
+        parameter points out will be put under the rootDirectory. The rootDirectory may also point
+        out to an existing directory in an existing zip archive when it is used with the append mode
+        enabled. Hence, you could replace existing files in a zip file with using rootDirectory and
+        append parameters together.
 
     nameFilters:
         This could be used to filter out some files based on their full file name (filename.ext)
@@ -389,7 +427,8 @@ int unzip(QFutureInterfaceBase* futureInterface, const QString& inputFilePath,
         to file names. Each name filter is a wildcard (globbing) filter that understands * and ?
         wildcards. See QRegularExpression Wildcard Matching. For example, the following code sets
         three name filters on a QDir to ensure that only files with extensions typically used for
-        C++ source files are listed: "*.cpp", "*.cxx", "*.cc". Only valid when inputPath is a dir.
+        C++ source files are listed: "*.cpp", "*.cxx", "*.cc". This parameter is only valid and works
+        when inputPath points out to a directory.
 
     filters:
         The filter is used to specify the kind of files that should be zipped. This filter flags
@@ -447,16 +486,38 @@ QFuture<int> zip(const QString& inputPath, const QString& outputFilePath,
 
 /*!
     Summary:
-        This function extracts the zip archive given by inputFilePath into the directory given by
-        outputPath. If the function fails for some reason, even before spawning a separate worker
-        thread, then it returns an invalid future (in "canceled" state) in the first place. If the
-        worker thread is spawned and it has failed, then the future returned by this function will
-        emit resultReadyAt signal (via QFutureWatcher) with -1 as the result.
+        This function extracts the content of the zip archive given by inputFilePath into the
+        directory given by outputPath. You can use overwrite parameter in order to enable overwriting
+        of any existing file or folders at the destination directory (within the outputPath),
+        otherwise (when the overwrite parameter is disabled) the unzip operation may fail at any
+        point because if any file or folder in the zip archive is already exists on the disk in the
+        destination directory (within the outputPath).
+
+        If the function fails for some reason, before spawning a separate worker thread, then it
+        returns an invalid future (in "canceled" state) in the first place. If the worker thread is
+        spawned and the unzip operation has failed for some reason, then the future returned by this
+        function will emit resultReadyAt signal (via QFutureWatcher) with -1 as the result. Also
+        progress will be set to 100 and progress text will be set to the appropriate error string.
+        So you can catch those error states via QFutureWatcher's progressTextChanged and
+        progressValueChanged signals. You can also translate the error string by passing it to a
+        QObject::tr() function.
+
+        While the operation is still in progress, the progressValueChanged signal is emit almost 25
+        times per second with the appropriate progress values of the ongoing operation and the
+        progress range for the operation is between 0 and 100. When the operation is finished, the
+        resultReadyAt signal is emitted with a single result that is the total number of entries
+        extracted from the zip archive. Overall, this function only returns a single result, either
+        it is -1 for errors, or the total number of entries extracted from the zip archive if it is
+        successful. Also the finished signal is emit at the end.
+
+        Other facilities, like pause/resume and cancel these are provided by the QFuture mechanism
+        may also be used at any arbitrary point in operation's life time in order to pause/resume or
+        cancel the operation. Appropriate signals will also be emit.
 
     inputFilePath:
         This points out to a zip archive file path where all the content of this zip archive is going
         to be extracted into the output path. And the zip archive must be exists and valid. Otherwise
-        extraction may fail at any point and -1 is reported as the result.
+        extraction fails.
 
     outputPath:
         Output path must be a directory. It is the folder where all the content of the root directory
@@ -464,8 +525,9 @@ QFuture<int> zip(const QString& inputPath, const QString& outputFilePath,
 
     overwrite:
         If this parameter is enabled, then all the files and folders are going to be overwritten even
-        if they exists. Otherwise, extraction operation is canceled at any point if any file in the
-        input zip archive is already exists on the disk.
+        if they exists. Otherwise (when it is disabled), extraction operation is canceled at any
+        point if any file in the input zip archive is already exists on the disk at the destination
+        folder (within the outputPath).
 */
 QFuture<int> unzip(const QString& inputFilePath, const QString& outputPath, bool overwrite)
 {
