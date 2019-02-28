@@ -551,6 +551,11 @@ QFuture<int> zip(const QString& sourcePath, const QString& destinationZipPath,
         may also be used at any arbitrary point in the operation's life time in order to pause/resume
         or cancel the operation. Appropriate signals will also be emitted.
 
+        There is no size or total number of files limitations because of this ZipAsync implementation
+        on this function for the zip archive that we are going to extract with this function. If
+        there are such limitations, they may only be exists because of the miniz implementation that
+        we use as the base zip library. Review miniz library for more information on this matter.
+
     sourceZipPath:
         This points out to a zip archive file path where all the content of this zip archive is
         going to be extracted into the destination path. And the zip archive must be exists and
