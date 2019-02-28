@@ -160,79 +160,83 @@ QByteArray cleanArchivePath(const QString& rootDirectory, const QString& relativ
     return archivePath.toUtf8();
 }
 
-int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
-        const QString& outputFilePath, const QString& rootDirectory, const QStringList& nameFilters,
+int zip(QFutureInterfaceBase* futureInterface, const QString& sourcePath,
+        const QString& destinationZipPath, const QString& rootDirectory, const QStringList& nameFilters,
         QDir::Filters filters, CompressionLevel compressionLevel, bool append)
 {
     auto future = static_cast<QFutureInterface<int>*>(futureInterface);
     future->setProgressRange(0, 100);
     future->setProgressValue(0);
 
-    //! inputPath is a file
-    if (QFileInfo(inputPath).isFile()) {
+    //! sourcePath is a file
+    if (QFileInfo(sourcePath).isFile()) {
         REPORT_NOW(1, 1)
 
-        QFile file(inputPath);
+        QFile file(sourcePath);
         if (!file.open(QIODevice::ReadOnly))
-            RETURN_ERROR("Couldn't read the input path.")
+            RETURN_ERROR_ARG("Couldn't read the source file: %1.", sourcePath)
         const QByteArray& data = file.readAll();
         file.close();
 
         REPORT_PROGRESS(30)
 
-        if (QFileInfo::exists(outputFilePath) && !append)
-            QFile::remove(outputFilePath);
+        if (!append && QFileInfo::exists(destinationZipPath))
+            QFile::remove(destinationZipPath);
 
         if (!mz_zip_add_mem_to_archive_file_in_place_v2(
-                    outputFilePath.toUtf8().constData(),
-                    cleanArchivePath(rootDirectory, QFileInfo(inputPath).fileName()).constData(),
+                    destinationZipPath.toUtf8().constData(),
+                    cleanArchivePath(rootDirectory, QFileInfo(sourcePath).fileName()).constData(),
                     data.constData(), data.size(), nullptr,
                     0, compressionLevel, nullptr))
-            RETURN_ERROR("Archive creation failed.")
+            RETURN_ERROR_ARG("Compression failed for: %1.", sourcePath)
         RETURN(1)
     }
 
-    //! inputPath is a directory
+    //! sourcePath is a directory
     QVector<QString> vector({""}); // Resolve files and folders recursively
     for (int i = 0; i < vector.size(); ++i) {
         const QString basePath = vector[i];
-        const QString& fullPath = inputPath + basePath;
+        const QString& fullPath = sourcePath + basePath;
         if (QFileInfo(fullPath).isDir()) {
             for (const QString& entryName : QDir(fullPath).entryList(
-                     nameFilters, filters, QDir::DirsLast | QDir::IgnoreCase)) {
+                     nameFilters, filters/*, QDir::DirsLast | QDir::IgnoreCase*/)) {
                 vector.append(basePath + '/' + entryName);
             }
         }
-        REPORT_RESULT(vector.size() - 1)
+        if (vector.size() > 1)
+            REPORT_RESULT(vector.size() - 1)
     }
+
+    if (vector.size() <= 1)
+        RETURN_ERROR("Nothing to compress, the source directory is empty.")
 
     REPORT_NOW(1, vector.size() - 1)
 
     qreal progress = 1;
     qreal step = (99. - progress) / (vector.size() - 1);
-    if (append && QFileInfo::exists(outputFilePath)) { // Modify an existing zip file
+    if (append && QFileInfo::exists(destinationZipPath)) { // Modify an existing zip file
         for (int i = 1; i < vector.size(); ++i) {
-            const QString& fullPath = inputPath + vector[i];
+            const QString& fullPath = sourcePath + vector[i];
             const bool isDir = QFileInfo(fullPath).isDir();
             const QByteArray& archivePath = cleanArchivePath(rootDirectory, vector[i], isDir);
             if (isDir) {
                 if (!mz_zip_add_mem_to_archive_file_in_place_v2(
-                            outputFilePath.toUtf8().constData(),
+                            destinationZipPath.toUtf8().constData(),
                             archivePath.constData(),
                             nullptr, 0, nullptr, 0, 0, nullptr))
-                    RETURN_ERROR("Archive modification failed, couldn't add a directory.")
+                    RETURN_ERROR_ARG("Couldn't add the directory entry: %1.", fullPath)
             } else {
                 QFile file(fullPath);
                 if (!file.open(QIODevice::ReadOnly))
-                    RETURN_ERROR("Archive modification failed, couldn't read the input path.")
+                    RETURN_ERROR_ARG("Couldn't read the file: %1.", fullPath)
                 const QByteArray& data = file.readAll();
                 file.close();
                 if (!mz_zip_add_mem_to_archive_file_in_place_v2(
-                            outputFilePath.toUtf8().constData(),
+                            destinationZipPath.toUtf8().constData(),
                             archivePath.constData(),
                             data.constData(), data.size(), nullptr,
                             0, compressionLevel, nullptr))
-                    RETURN_ERROR("Archive modification failed, couldn't add a file.")
+                    RETURN_ERROR_ARG("Couldn't add the file: %1.", fullPath)
             }
             progress += step;
             REPORT_PROGRESS(progress)
@@ -241,22 +245,22 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
         mz_zip_archive zip; // Initialize the zip archive on heap
         memset(&zip, 0, sizeof(zip));
         if (!mz_zip_writer_init_heap(&zip, 0, 0))
-            RETURN_ERROR("Couldn't initialize the zip writer on heap.")
+            RETURN_ERROR("Couldn't initialize a zip writer on memory.")
         for (int i = 1; i < vector.size(); ++i) {
-            const QString& fullPath = inputPath + vector[i];
+            const QString& fullPath = sourcePath + vector[i];
             const bool isDir = QFileInfo(fullPath).isDir();
             const QString& archivePath = cleanArchivePath(rootDirectory, vector[i], isDir);
             if (isDir) {
                 if (!mz_zip_writer_add_mem(&zip, archivePath.toUtf8().constData(), nullptr, 0, 0)) {
                     mz_zip_writer_end(&zip);
-                    RETURN_ERROR_ARG("Couldn't create a directory, path: %1.", fullPath.toUtf8().constData())
+                    RETURN_ERROR_ARG("Couldn't create a directory entry for: %1.", fullPath)
                 }
             } else {
                 if (!mz_zip_writer_add_file(&zip, archivePath.toUtf8().constData(),
                                             fullPath.toUtf8().constData(),
                                             nullptr, 0, compressionLevel)) {
                     mz_zip_writer_end(&zip);
-                    RETURN_ERROR_ARG("Couldn't compress a file, path: %1.", fullPath.toUtf8().constData())
+                    RETURN_ERROR_ARG("Couldn't compress the file: %1.", fullPath)
                 }
             }
             progress += step;
@@ -264,25 +268,31 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& inputPath,
         }
         void* data; // Finalize the zip archive on heap
         size_t size;
-        mz_zip_writer_finalize_heap_archive(&zip, &data, &size);
+        if (!mz_zip_writer_finalize_heap_archive(&zip, &data, &size)) {
+            mz_zip_writer_end(&zip);
+            mz_free(data);
+            RETURN_ERROR("Archive creation is failed for some reason.")
+        }
         mz_zip_writer_end(&zip);
-        if (data && size > 0 && vector.size() > 1) { // Flush the zip archive from memory to file on disk
-            QFile file(outputFilePath);
+        if (data && size > 0 && vector.size() > 1) { // Flush archive data from memory to disk
+            QFile file(destinationZipPath);
             if (!file.open(QIODevice::WriteOnly)) {
                 mz_free(data);
-                RETURN_ERROR("Couldn't write archive from memory to disk.")
+                RETURN_ERROR("Couldn't write archive data from memory to disk.")
             }
             file.write((char*)data, size);
-        }
-        if (data)
+        } else {
             mz_free(data);
+            RETURN_ERROR("Archive creation is failed for some reason.")
+        }
+        mz_free(data);
     }
 
     RETURN(vector.size() - 1)
 }
 
-int unzip(QFutureInterfaceBase* futureInterface, const QString& inputFilePath,
-          const QString& outputPath, bool overwrite)
+int unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath,
+          const QString& destinationPath, bool overwrite)
 {
     auto future = static_cast<QFutureInterface<int>*>(futureInterface);
     future->setProgressRange(0, 100);
@@ -290,13 +300,13 @@ int unzip(QFutureInterfaceBase* futureInterface, const QString& inputFilePath,
 
     mz_zip_archive zip;
     memset(&zip, 0, sizeof(zip));
-    if (!mz_zip_reader_init_file_v2(&zip, inputFilePath.toUtf8().constData(), 0, 0, 0))
-        RETURN_ERROR("Couldn't initialize the zip reader.")
+    if (!mz_zip_reader_init_file_v2(&zip, sourceZipPath.toUtf8().constData(), 0, 0, 0))
+        RETURN_ERROR("Couldn't initialize a zip reader.")
 
     mz_uint processedEntryCount = 0;
     mz_uint numberOfFiles = mz_zip_reader_get_num_files(&zip);
 
-    if (numberOfFiles <= 0) {
+    if (numberOfFiles == 0) {
         mz_zip_reader_end(&zip);
         RETURN_ERROR("Archive is either invalid or empty.")
     }
@@ -314,14 +324,18 @@ int unzip(QFutureInterfaceBase* futureInterface, const QString& inputFilePath,
         }
         if (fileStat.m_is_directory) {
             if (!overwrite) {
-                QDir target(outputPath + '/' + fileStat.m_filename); target.cdUp();
-                const bool isBase = target == QDir(outputPath);
-                if (isBase && QFileInfo::exists(outputPath + '/' + fileStat.m_filename)) {
+                const bool isBase = QString(fileStat.m_filename).count('/') <= 1;
+                if (isBase && QFileInfo::exists(destinationPath + '/' + fileStat.m_filename)) {
                     mz_zip_reader_end(&zip);
-                    RETURN_ERROR("Operation canceled, dir already exists.")
+                    RETURN_ERROR_ARG("Extraction canceled, dir already exists: %1.",
+                                     destinationPath + '/' + fileStat.m_filename)
                 }
             }
-            QDir(outputPath).mkpath(fileStat.m_filename);
+            if (!QDir(destinationPath).mkpath(fileStat.m_filename)) {
+                mz_zip_reader_end(&zip);
+                RETURN_ERROR_ARG("Directory creation on disk is failed for: %1.",
+                                 destinationPath + '/' + fileStat.m_filename)
+            }
             processedEntryCount++;
             REPORT_PROGRESS_CLEAN(100 * processedEntryCount / numberOfFiles, true)
         }
@@ -339,15 +353,20 @@ int unzip(QFutureInterfaceBase* futureInterface, const QString& inputFilePath,
             RETURN_ERROR("Archive isn't supported.")
         }
         if (!fileStat.m_is_directory) {
-            if (!overwrite && QFileInfo::exists(outputPath + '/' + fileStat.m_filename)) {
-                mz_zip_reader_end(&zip);
-                RETURN_ERROR("Operation canceled, file already exists.")
+            if (!overwrite) {
+                const bool isBase = QString(fileStat.m_filename).count('/') < 1;
+                if (isBase && QFileInfo::exists(destinationPath + '/' + fileStat.m_filename)) {
+                    mz_zip_reader_end(&zip);
+                    RETURN_ERROR_ARG("Extraction canceled, file already exists: %1.",
+                                     destinationPath + '/' + fileStat.m_filename)
+                }
             }
             if (!mz_zip_reader_extract_to_file(
-                        &zip, i, (outputPath + '/' + fileStat.m_filename).toUtf8().constData(),
+                        &zip, i, (destinationPath + '/' + fileStat.m_filename).toUtf8().constData(),
                         0)) {
                 mz_zip_reader_end(&zip);
-                RETURN_ERROR_ARG("Extraction failed, file: %1.", fileStat.m_filename)
+                RETURN_ERROR_ARG("Extraction failed, file: %1.",
+                                 destinationPath + '/' + fileStat.m_filename)
             }
             processedEntryCount++;
             REPORT_PROGRESS_CLEAN(100 * processedEntryCount / numberOfFiles, true)
@@ -360,207 +379,225 @@ int unzip(QFutureInterfaceBase* futureInterface, const QString& inputFilePath,
 
 /*!
     Summary:
-        This function compresses, depending on the inputPath, the file or recursive content of the
-        directory given by inputPath into the zip archive file given by outputFilePath. You can use
-        append parameter if you want, to extend (or overwrite) the content of an existing zip file
-        at the destination where inputPath points out. You can use the rootDirectory parameter if
-        you want, to put all the input resources (files and folders) into a relative root directory
-        under the central directory of a zip archive. Also you can use nameFilters and filters
-        parameters when the inputPath points out to a directory, in order to specify what kind of
-        files and folders recursively will be scanned and which one of them will be added into the
-        final zip archive. On the other hand, compressionLevel parameter could be used to specify
-        compression hardness for the zip archive.
+        This function compresses, depending on the sourcePath, the file or recursive content of the
+        directory given by the sourcePath into the zip archive file given by the destinationZipPath.
+        You can use the append parameter if you want, to extend (or overwrite) the content of an
+        existing zip file at the destination where the sourcePath points out, or, otherwise, a new
+        zip archive file will be created from scratch on the disk where the destinationZipPath
+        points out to. You can use the rootDirectory parameter if you want, to put all the source
+        resources (files and folders) into a relative root directory under the central directory of
+        a zip archive. Also you can use the nameFilters and filters parameters when the sourcePath
+        points out to a directory, in order to specify what kind of files and folders recursively
+        will be scanned and which one of them will be added into the final zip archive. And finally,
+        the compressionLevel parameter can be used to specify compression hardness for the zip archive.
 
         If the function fails for some reason, before spawning a separate worker thread, then it
         returns an invalid future (in "canceled" state) in the first place. If the worker thread is
         spawned and the zip operation has failed for some reason, then the future returned by this
-        function will emit resultReadyAt signal (via QFutureWatcher) with -1 as the result. Also
-        progress will be set to 100 and progress text will be set to the appropriate error string.
-        So you can catch those error states via QFutureWatcher's progressTextChanged and
+        function will emit resultReadyAt signal (via QFutureWatcher) with -1 as the result. Also the
+        progress value will be set to 100 and the progress text will be set to the appropriate error
+        string. So you can catch those error states via QFutureWatcher's progressTextChanged and
         progressValueChanged signals. You can also translate the error string by passing it to a
-        QObject::tr() function.
+        QObject::tr() function (which means you can use Qt Linguist Tools (lupdate etc) on this cpp
+        file in order to extract out the original English written error strings to translate).
 
-        While the operation is still in progress, the progressValueChanged signal is emit almost 25
-        times per second with the appropriate progress values of the ongoing operation and the
-        progress range for the operation is between 0 and 100. When the operation is finished, the
-        resultReadyAt signal is emitted with a single result that is the total number of entries
-        extracted from the zip archive. Overall, this function only returns a single result, either
-        it is -1 for errors, or the total number of entries extracted from the zip archive if it is
-        successful. Also the finished signal is emit at the end.
+        The zip operation occurs in 2 phases. In the first phase, the files and folders are resolved
+        recursively within the sourcePath. And while the first phase is still in progress, the
+        resultReadyAt signal is emitted almost 25 times per second with the total number of entries
+        resolved so far. After the resolution is done and all the files and folders are resolved,
+        the total number of all the resolved files and folders will be reported (resultReadyAt)
+        alongside the progress value will be set to %1 (progressValueChanged will be emitted). After
+        this point, the second phase starts. In the second phase, resolved files and folders are
+        started to be compressed (on the heap if overwrite isn't going to happen, otherwise every
+        compression cycle will be saved immediately into the zip archive on the disk that is being
+        overwritten). At this point, for each cycle of the compression, the progressValueChanged
+        signal is emitted almost 25 times per second with the appropriate progress values of the
+        ongoing compression operation and the progress range for the operation is between 0 and 100.
+        (Progress reporting may freezes for some time until, for instance, a big chunk of file is
+        being completely compressed) When the operation is finished, the finished signal is emitted
+        alongside with the progressValueChanged signal that the progress value is set to 100. As we
+        mentioned above, if any error occurs at any point in the operation's life time, a
+        resultReadyAt signal will be emitted with -1 as the result and the progress value will be
+        set to 100 (which means the progressValueChanged signal will also be emitted) and finally
+        the operation will be finished.
 
         Other facilities, like pause/resume and cancel these are provided by the QFuture mechanism
-        may also be used at any arbitrary point in operation's life time in order to pause/resume or
-        cancel the operation. Appropriate signals will also be emit.
+        may also be used at any arbitrary point in the operation's life time in order to pause/resume
+        or cancel the operation. Appropriate signals will also be emitted.
 
-    inputPath:
-        This could be either a file or directory, but it must be exists and readable in any case. If
-        it is a directory, then all the files and folders in it will be compressed into the output zip
+    sourcePath:
+        This could be either a file or a directory, but it must be exists and readable in any case.
+        If it is a directory, then all the files and folders in it will be compressed into the zip
         file. If you want all the files and folders within the directory to be placed under a root
-        directory with the same name of the input directory you can use rootDirectory parameter. You
-        can also use rootDirectory parameter to specify another root directory name (base path or
-        however you name it) other than the input directory name. Compression occurs recursively.
+        directory with the same name of the source directory you can use the rootDirectory parameter.
+        You can also use the rootDirectory parameter to specify another root directory name (base
+        path or however you name it) other than the source directory name. Compression occurs
+        recursively.
 
-    outputFilePath:
+    destinationZipPath:
         This points out to a zip file path. If the zip file is already exists, regardless of whether
         it is a valid or invalid zip file, if append isn't enabled, it will be cleansed and a valid
         zip file will be created on the disk from scratch. On the other hand if append is enabled,
-        and the zip file is valid, the files and folders the input path points out will be appended
-        into that zip file. If either the zip file is invalid or operation fails for some reason,
-        the existing zip file may also be corrupted. If the file outputFilePath parameter points out
-        doesn't exist, then, regardless of the state of the append parameter, a new valid zip file
-        will be created on the disk from scratch and files and folders will be compressed into it.
+        and the zip file is valid, the files and folders the source path points out will be appended
+        into that zip file. If either the zip file is invalid or the operation fails for some reason,
+        the existing zip file may also be corrupted. If the file destinationZipPath parameter points
+        out doesn't exist, then, regardless of the state of the append parameter, a new valid zip
+        file will be created on the disk from scratch and files and folders will be compressed into it.
 
     rootDirectory:
         It is used to place files and folders under a root directory, relative to the central
         directory of a zip archive. If it is empty, then the central directory of the zip archive is
         chosen. This parameter may be like "/my/relative/path" or "/my/relative/path/" or
-        "my/relative/path", or "my/relative/path/". Hence, all the files and folders that inputPath
-        parameter points out will be put under the rootDirectory. The rootDirectory may also point
+        "my/relative/path", or "my/relative/path/". Hence, all the files and folders that sourcePath
+        parameter points out will be put under the rootDirectory. The rootDirectory may also points
         out to an existing directory in an existing zip archive when it is used with the append mode
         enabled. Hence, you could replace existing files in a zip file with using rootDirectory and
         append parameters together.
 
     nameFilters:
         This could be used to filter out some files based on their full file name (filename.ext)
-        hence those files won't be included into the output zip file. If it is empty, then there will
+        hence those files won't be included in the zip file. If it is empty, then there will
         no such filtering occur on the zip file. Directory names could also be filtered in addition
         to file names. Each name filter is a wildcard (globbing) filter that understands * and ?
-        wildcards. See QRegularExpression Wildcard Matching. For example, the following code sets
-        three name filters on a QDir to ensure that only files with extensions typically used for
-        C++ source files are listed: "*.cpp", "*.cxx", "*.cc". This parameter is only valid and works
-        when inputPath points out to a directory.
+        wildcards. See QRegularExpression Wildcard Matching. For example, the following snippets set
+        three name filters on the zip funtion to ensure that files with extensions typically used
+        for C++ source files aren't going to be included in the final zip archive: "*.cpp", "*.cxx",
+        "*.cc". This parameter is only valid and works when sourcePath points out to a directory.
 
     filters:
-        The filter is used to specify the kind of files that should be zipped. This filter flags
-        only valid when inputPath is a dir and it is used to resolve dirs and files recursively under
-        a directory (when the inputPath points out a directory). With this flag, for instance, you
-        can filter out hidden files and don't include them in a zip file.
+        This flag is used to specify the kind of files that should be zipped. This filter flag only
+        valid when sourcePath is a directory. This flag is used to resolve dirs and files recursively
+        under the sourcePath (when the sourcePath points out to a directory). With this flag, for
+        instance, you can filter out hidden files and don't include them in a zip file. If you pass
+        QDir::NoFilter flag, then (QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot) is chosen
+        for resolving files and folders withing the sourcePath.
 
     compressionLevel:
         This parameter is used to specify compression hardness for the zip archive. How hard the
-        level you choose, the compression will take longer for to finish, but final zip file will be
-        less in size.
+        level you choose, the compression will take longer for it to finish, but final zip file will
+        be less in size.
 
     append:
-        This parameter is used to specify if file and folders are going to appended into the zip file
-        that is already exists on the disk pointed out by the outputFilePath parameter. This option
-        is similar to the affect of QIODevice::Append on the QFile::open function. If outputFilePath
-        parameter points out to a nonexistent file, then append option doesn't have any effect.
+        This parameter is used to specify if files and folders are going to be appended into the zip
+        file that is already exists on the disk pointed out by the destinationZipPath parameter or
+        not. This option is similar to the affect of QIODevice::Append on the QFile::open function.
+        If destinationZipPath parameter points out to a nonexistent file, then append option doesn't
+        have any effect.
 */
-
-QFuture<int> zip(const QString& inputPath, const QString& outputFilePath,
+QFuture<int> zip(const QString& sourcePath, const QString& destinationZipPath,
                  const QString& rootDirectory, const QStringList& nameFilters,
                  QDir::Filters filters, CompressionLevel compressionLevel, bool append)
 {
-    if (!QFileInfo::exists(inputPath)) {
-        qWarning("WARNING: The input path doesn't exist");
+    if (!QFileInfo::exists(sourcePath)) {
+        qWarning("WARNING: The source path doesn't exist");
         return Internal::invalidFuture();
     }
 
-    if (!QFileInfo(inputPath).isReadable()) {
-        qWarning("WARNING: The input path isn't readable");
+    if (!QFileInfo(sourcePath).isReadable()) {
+        qWarning("WARNING: The source path isn't readable");
         return Internal::invalidFuture();
     }
 
-    if (QFileInfo::exists(outputFilePath) && QFileInfo(outputFilePath).isDir()) {
-        qWarning("WARNING: The output file path cannot be a directory");
+    if (QFileInfo::exists(destinationZipPath) && QFileInfo(destinationZipPath).isDir()) {
+        qWarning("WARNING: The destination zip path cannot be a directory");
         return Internal::invalidFuture();
     }
 
-    const bool outputFilePathExists = QFileInfo::exists(outputFilePath);
+    const bool destinationZipPathExists = QFileInfo::exists(destinationZipPath);
 
-    if (!Internal::touch(outputFilePath)) {
-        qWarning("WARNING: The output file path isn't writable");
+    if (!Internal::touch(destinationZipPath)) {
+        qWarning("WARNING: The destination zip path isn't writable");
         return Internal::invalidFuture();
     }
 
-    if (!outputFilePathExists)
-        QFile::remove(outputFilePath);
+    if (!destinationZipPathExists)
+        QFile::remove(destinationZipPath);
 
     if (filters == QDir::NoFilter)
         filters = QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot;
 
-    return Async::run(Internal::zip, inputPath, outputFilePath,
+    return Async::run(Internal::zip, sourcePath, destinationZipPath,
                       rootDirectory, nameFilters, filters, compressionLevel, append);
 }
 
 /*!
     Summary:
-        This function extracts the content of the zip archive given by inputFilePath into the
-        directory given by outputPath. You can use overwrite parameter in order to enable overwriting
-        of any existing file or folders at the destination directory (within the outputPath),
-        otherwise (when the overwrite parameter is disabled) the unzip operation may fail at any
-        point because if any file or folder in the zip archive is already exists on the disk in the
-        destination directory (within the outputPath).
+        This function extracts the content of the zip archive given by sourceZipPath into the
+        directory given by destinationPath. You can use overwrite parameter in order to enable
+        overwriting of any existing file or folders at the destination directory (within the
+        destinationPath), otherwise (when the overwrite parameter is disabled) the unzip operation
+        may fail at any point because if any file or folder in the zip archive is already exists on
+        the disk in the destination directory (within the destinationPath).
 
         If the function fails for some reason, before spawning a separate worker thread, then it
         returns an invalid future (in "canceled" state) in the first place. If the worker thread is
         spawned and the unzip operation has failed for some reason, then the future returned by this
-        function will emit resultReadyAt signal (via QFutureWatcher) with -1 as the result. Also
-        progress will be set to 100 and progress text will be set to the appropriate error string.
-        So you can catch those error states via QFutureWatcher's progressTextChanged and
+        function will emit resultReadyAt signal (via QFutureWatcher) with -1 as the result. Also the
+        progress value will be set to 100 and the progress text will be set to the appropriate error
+        string. So you can catch those error states via QFutureWatcher's progressTextChanged and
         progressValueChanged signals. You can also translate the error string by passing it to a
-        QObject::tr() function.
+        QObject::tr() function (which means you can use Qt Linguist Tools (lupdate etc) on this cpp
+        file in order to extract out the original English written error strings to translate).
 
-        While the operation is still in progress, the progressValueChanged signal is emit almost 25
-        times per second with the appropriate progress values of the ongoing operation and the
+        While the operation is still in progress, the progressValueChanged signal is emitted almost
+        25 times per second with the appropriate progress values of the ongoing operation and the
         progress range for the operation is between 0 and 100. When the operation is finished, the
         resultReadyAt signal is emitted with a single result that is the total number of entries
         extracted from the zip archive. Overall, this function only returns a single result, either
         it is -1 for errors, or the total number of entries extracted from the zip archive if it is
-        successful. Also the finished signal is emit at the end.
+        successful. Also the finished signal is emitted at the end.
 
         Other facilities, like pause/resume and cancel these are provided by the QFuture mechanism
-        may also be used at any arbitrary point in operation's life time in order to pause/resume or
-        cancel the operation. Appropriate signals will also be emit.
+        may also be used at any arbitrary point in the operation's life time in order to pause/resume
+        or cancel the operation. Appropriate signals will also be emitted.
 
-    inputFilePath:
-        This points out to a zip archive file path where all the content of this zip archive is going
-        to be extracted into the output path. And the zip archive must be exists and valid. Otherwise
-        extraction fails.
+    sourceZipPath:
+        This points out to a zip archive file path where all the content of this zip archive is
+        going to be extracted into the destination path. And the zip archive must be exists and
+        valid. Otherwise extraction fails.
 
-    outputPath:
-        Output path must be a directory. It is the folder where all the content of the root directory
-        of the input zip archive is going to be poured into directly.
+    destinationPath:
+        This must be a directory. It is the folder where all the content of the root directory of
+        the source zip archive is going to be poured into.
 
     overwrite:
-        If this parameter is enabled, then all the files and folders are going to be overwritten even
-        if they exists. Otherwise (when it is disabled), extraction operation is canceled at any
-        point if any file in the input zip archive is already exists on the disk at the destination
-        folder (within the outputPath).
+        If this parameter is enabled, then all the files and folders are going to be overwritten
+        even if they exists. Otherwise (when it is disabled), the extraction operation is canceled
+        at any point if any file in the source zip archive is already exists on the disk at the
+        destination folder (within the destinationPath).
 */
-QFuture<int> unzip(const QString& inputFilePath, const QString& outputPath, bool overwrite)
+QFuture<int> unzip(const QString& sourceZipPath, const QString& destinationPath, bool overwrite)
 {
-    if (!QFileInfo::exists(inputFilePath)) {
-        qWarning("WARNING: The input file path doesn't exist");
+    if (!QFileInfo::exists(sourceZipPath)) {
+        qWarning("WARNING: The source zip path doesn't exist");
         return Internal::invalidFuture();
     }
 
-    if (QFileInfo(inputFilePath).isDir()) {
-        qWarning("WARNING: The input file path cannot be a directory");
+    if (QFileInfo(sourceZipPath).isDir()) {
+        qWarning("WARNING: The source zip path cannot be a directory");
         return Internal::invalidFuture();
     }
 
-    if (!QFileInfo(inputFilePath).isReadable()) {
-        qWarning("WARNING: The input file path isn't readable");
+    if (!QFileInfo(sourceZipPath).isReadable()) {
+        qWarning("WARNING: The source zip path isn't readable");
         return Internal::invalidFuture();
     }
 
-    if (!QFileInfo::exists(outputPath)) {
-        qWarning("WARNING: The output path doesn't exist");
+    if (!QFileInfo::exists(destinationPath)) {
+        qWarning("WARNING: The destination path doesn't exist");
         return Internal::invalidFuture();
     }
 
-    if (!QFileInfo(outputPath).isDir()) {
-        qWarning("WARNING: The output path cannot be a file");
+    if (!QFileInfo(destinationPath).isDir()) {
+        qWarning("WARNING: The destination path cannot be a file");
         return Internal::invalidFuture();
     }
 
-    if (!QFileInfo(outputPath).isWritable()) {
-        qWarning("WARNING: The output path isn't writable");
+    if (!QFileInfo(destinationPath).isWritable()) {
+        qWarning("WARNING: The destination path isn't writable");
         return Internal::invalidFuture();
     }
 
-    return Async::run(Internal::unzip, inputFilePath, outputPath, overwrite);
+    return Async::run(Internal::unzip, sourceZipPath, destinationPath, overwrite);
 }
 } // ZipAsync
