@@ -25,21 +25,15 @@
 #include <miniz.h>
 #include <QFileInfo>
 
+#define INIT_FUTURE(ret, futureInterface) \
+auto future = static_cast<QFutureInterface<ret>*>(futureInterface); \
+future->setProgressRange(0, 100); \
+future->setProgressValue(0);
+
 #define REPORT_NOW(progress, result) \
 { \
     future->setProgressValue(progress); \
     future->reportResult(result); \
-}
-
-#define REPORT_PROGRESS(progress) \
-{ \
-    if (future->isProgressUpdateNeeded()) { \
-        if (future->isPaused()) \
-            future->waitForResume(); \
-        if (future->isCanceled()) \
-            return -1; \
-        future->setProgressValue(progress); \
-    } \
 }
 
 #define REPORT_PROGRESS_CLEAN(progress, reader) \
@@ -119,20 +113,6 @@ QString combineStringArguments(const char* msg, Args&&... args)
     return errorString;
 }
 
-QByteArray cleanArchivePath(const QString& rootDirectory, const QString& relativePath)
-{
-    Q_ASSERT(!relativePath.isEmpty());
-    QString archivePath(relativePath);
-    if (!rootDirectory.isEmpty()) {
-        QString root(rootDirectory);
-        if (root[0] == '/')
-            root.remove(0, 1);
-        if (!root.isEmpty())
-            archivePath.prepend(root + '/');
-    }
-    return archivePath.toUtf8();
-}
-
 QByteArray cleanArchivePath(const QString& rootDirectory, const QString& relativePath, bool isDir)
 {
     Q_ASSERT(!relativePath.isEmpty());
@@ -159,71 +139,24 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& sourcePath,
         const QString& destinationZipPath, const QString& rootDirectory, const QStringList& nameFilters,
         QDir::Filters filters, CompressionLevel compressionLevel, bool append)
 {
-    auto future = static_cast<QFutureInterface<int>*>(futureInterface);
-    future->setProgressRange(0, 100);
-    future->setProgressValue(0);
+    INIT_FUTURE(int, futureInterface)
 
-    //! sourcePath is a file
+    QVector<QString> vector({""});
     if (QFileInfo(sourcePath).isFile()) {
-        REPORT_NOW(1, 1)
-
-        mz_zip_archive zip;
-        memset(&zip, 0, sizeof(zip));
-        if (append && QFileInfo::exists(destinationZipPath)) {
-            if (!mz_zip_reader_init_file_v2(
-                        &zip,
-                        destinationZipPath.toUtf8().constData(),
-                        MZ_ZIP_FLAG_DO_NOT_SORT_CENTRAL_DIRECTORY, 0, 0)) {
-                RETURN_ERROR("Couldn't initialize a zip reader for: %1.", destinationZipPath)
-            }
-            if (!mz_zip_writer_init_from_reader_v2(&zip, destinationZipPath.toUtf8().constData(), 0)) {
-                mz_zip_reader_end(&zip);
-                RETURN_ERROR("Couldn't initialize a zip writer for: %1.", destinationZipPath)
-            }
-        } else {
-            if (!mz_zip_writer_init_file_v2(&zip, destinationZipPath.toUtf8().constData(), 0, 0))
-                RETURN_ERROR("Couldn't initialize a zip writer for: %1.", destinationZipPath)
-        }
-
-        if (!mz_zip_writer_add_file(
-                    &zip,
-                    cleanArchivePath(rootDirectory, QFileInfo(sourcePath).fileName()).constData(),
-                    sourcePath.toUtf8().constData(),
-                    nullptr, 0, compressionLevel)) {
-            mz_zip_writer_finalize_archive(&zip);
-            mz_zip_writer_end(&zip);
-            RETURN_ERROR("Couldn't compress the file: %1.", sourcePath)
-        }
-
-        REPORT_PROGRESS_CLEAN(90, false)
-
-        if (!mz_zip_writer_finalize_archive(&zip)) {
-            mz_zip_writer_end(&zip);
-            RETURN_ERROR("Couldn't finalize the zip writer.")
-        }
-        if (!mz_zip_writer_end(&zip))
-            RETURN_ERROR("Couldn't clean the zip writer cache.")
-
-        DONE(1)
-    }
-
-    //! sourcePath is a directory
-    QVector<QString> vector({""}); // Resolve files and folders recursively
-    for (int i = 0; i < vector.size(); ++i) {
-        const QString basePath = vector[i];
-        const QString& fullPath = sourcePath + basePath;
-        if (QFileInfo(fullPath).isDir()) {
-            for (const QString& entryName : QDir(fullPath).entryList({}, filters)) {
-                if (!nameFilters.isEmpty()
-                        && QFileInfo(fullPath + '/' + entryName).isFile()
-                        && QDir::match(nameFilters, entryName)) {
-                    continue;
+        if (!QDir::match(nameFilters, QFileInfo(sourcePath).fileName()))
+            vector.append("/");
+    } else {
+        for (int i = 0; i < vector.size(); ++i) {
+            const QString& path = sourcePath + vector[i];
+            if (QFileInfo(path).isDir()) {
+                for (const QString& entryName : QDir(path).entryList({}, filters)) {
+                    if (!QDir::match(nameFilters, entryName) || !QFileInfo(path + '/' + entryName).isFile())
+                        vector.append(vector[i] + '/' + entryName);
                 }
-                vector.append(basePath + '/' + entryName);
             }
+            if (vector.size() > 1)
+                REPORT_RESULT(vector.size() - 1)
         }
-        if (vector.size() > 1)
-            REPORT_RESULT(vector.size() - 1)
     }
 
     if (vector.size() <= 1)
@@ -231,81 +164,57 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& sourcePath,
 
     REPORT_NOW(1, vector.size() - 1)
 
+    mz_zip_archive zip;
     qreal progress = 1;
     qreal step = (99. - progress) / (vector.size() - 1);
-    if (append && QFileInfo::exists(destinationZipPath)) { // Modify an existing zip file
-        for (int i = 1; i < vector.size(); ++i) {
-            const QString& fullPath = sourcePath + vector[i];
-            const bool isDir = QFileInfo(fullPath).isDir();
-            const QByteArray& archivePath = cleanArchivePath(rootDirectory, vector[i], isDir);
-            if (isDir) {
-                if (!mz_zip_add_mem_to_archive_file_in_place_v2(
-                            destinationZipPath.toUtf8().constData(),
-                            archivePath.constData(),
-                            nullptr, 0, nullptr, 0, 0, nullptr))
-                    RETURN_ERROR("Couldn't add the directory entry: %1.", fullPath)
-            } else {
-                QFile file(fullPath);
-                if (!file.open(QIODevice::ReadOnly))
-                    RETURN_ERROR("Couldn't read the file: %1.", fullPath)
-                const QByteArray& data = file.readAll();
-                file.close();
-                if (!mz_zip_add_mem_to_archive_file_in_place_v2(
-                            destinationZipPath.toUtf8().constData(),
-                            archivePath.constData(),
-                            data.constData(), data.size(), nullptr,
-                            0, compressionLevel, nullptr))
-                    RETURN_ERROR("Couldn't add the file: %1.", fullPath)
-            }
-            progress += step;
-            REPORT_PROGRESS(progress)
+    memset(&zip, 0, sizeof(zip));
+
+    if (append && QFileInfo::exists(destinationZipPath)) {
+        if (!mz_zip_reader_init_file_v2(
+                    &zip,
+                    destinationZipPath.toUtf8().constData(),
+                    MZ_ZIP_FLAG_DO_NOT_SORT_CENTRAL_DIRECTORY, 0, 0)) {
+            RETURN_ERROR("Couldn't initialize a zip reader for: %1.", destinationZipPath)
         }
-    } else { // Create a new zip file
-        mz_zip_archive zip; // Initialize the zip archive on heap
-        memset(&zip, 0, sizeof(zip));
-        if (!mz_zip_writer_init_heap(&zip, 0, 0))
-            RETURN_ERROR("Couldn't initialize a zip writer on memory.")
-        for (int i = 1; i < vector.size(); ++i) {
-            const QString& fullPath = sourcePath + vector[i];
-            const bool isDir = QFileInfo(fullPath).isDir();
-            const QString& archivePath = cleanArchivePath(rootDirectory, vector[i], isDir);
-            if (isDir) {
-                if (!mz_zip_writer_add_mem(&zip, archivePath.toUtf8().constData(), nullptr, 0, 0)) {
-                    mz_zip_writer_end(&zip);
-                    RETURN_ERROR("Couldn't create a directory entry for: %1.", fullPath)
-                }
-            } else {
-                if (!mz_zip_writer_add_file(&zip, archivePath.toUtf8().constData(),
-                                            fullPath.toUtf8().constData(),
-                                            nullptr, 0, compressionLevel)) {
-                    mz_zip_writer_end(&zip);
-                    RETURN_ERROR("Couldn't compress the file: %1.", fullPath)
-                }
-            }
-            progress += step;
-            REPORT_PROGRESS_CLEAN(progress, false)
+        if (!mz_zip_writer_init_from_reader_v2(&zip, destinationZipPath.toUtf8().constData(), 0)) {
+            mz_zip_reader_end(&zip);
+            RETURN_ERROR("Couldn't initialize a zip writer for: %1.", destinationZipPath)
         }
-        void* data; // Finalize the zip archive on heap
-        size_t size;
-        if (!mz_zip_writer_finalize_heap_archive(&zip, &data, &size)) {
-            mz_zip_writer_end(&zip);
-            mz_free(data);
-            RETURN_ERROR("Archive creation is failed for some reason.")
-        }
-        mz_zip_writer_end(&zip);
-        if (data && size > 0 && vector.size() > 1) { // Flush archive data from memory to disk
-            QFile file(destinationZipPath);
-            if (!file.open(QIODevice::WriteOnly)) {
-                mz_free(data);
-                RETURN_ERROR("Couldn't write archive data from memory to disk.")
-            }
-            file.write((char*)data, size);
-        } else {
-            mz_free(data);
-            RETURN_ERROR("Archive creation is failed for some reason.")
-        }
-        mz_free(data);
+    } else {
+        if (!mz_zip_writer_init_file_v2(&zip, destinationZipPath.toUtf8().constData(), 0, 0))
+            RETURN_ERROR("Couldn't initialize a zip writer for: %1.", destinationZipPath)
     }
+
+    for (int i = 1; i < vector.size(); ++i) {
+        const QString& fullPath = sourcePath + vector[i];
+        const bool isDir = QFileInfo(fullPath).isDir();
+        const QByteArray& archivePath = cleanArchivePath(rootDirectory, vector[i], isDir);
+
+        if (isDir) {
+            if (!mz_zip_add_mem_to_archive_file_in_place_v2(
+                        destinationZipPath.toUtf8().constData(),
+                        archivePath.constData(),
+                        nullptr, 0, nullptr, 0, 0, nullptr))
+                RETURN_ERROR("Couldn't add the directory entry: %1.", fullPath)
+        } else {
+            if (!mz_zip_writer_add_file(&zip, archivePath, fullPath.toUtf8().constData(),
+                                        nullptr, 0, compressionLevel)) {
+                mz_zip_writer_finalize_archive(&zip);
+                mz_zip_writer_end(&zip);
+                RETURN_ERROR("Couldn't compress the file: %1.", fullPath)
+            }
+        }
+
+        progress += step;
+        REPORT_PROGRESS_CLEAN(progress, false)
+    }
+
+    if (!mz_zip_writer_finalize_archive(&zip)) {
+        mz_zip_writer_end(&zip);
+        RETURN_ERROR("Couldn't finalize the zip writer.")
+    }
+    if (!mz_zip_writer_end(&zip))
+        RETURN_ERROR("Couldn't clean the zip writer cache.")
 
     DONE(vector.size() - 1)
 }
