@@ -113,6 +113,20 @@ QString combineStringArguments(const char* msg, Args&&... args)
     return errorString;
 }
 
+QByteArray cleanArchivePath(const QString& rootDirectory, const QString& relativePath)
+{
+    Q_ASSERT(!relativePath.isEmpty());
+    QString archivePath(relativePath);
+    if (!rootDirectory.isEmpty()) {
+        QString root(rootDirectory);
+        if (root[0] == '/')
+            root.remove(0, 1);
+        if (!root.isEmpty())
+            archivePath.prepend(root + '/');
+    }
+    return archivePath.toUtf8();
+}
+
 QByteArray cleanArchivePath(const QString& rootDirectory, const QString& relativePath, bool isDir)
 {
     Q_ASSERT(!relativePath.isEmpty());
@@ -141,10 +155,10 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& sourcePath,
 {
     INIT_FUTURE(int, futureInterface)
 
+    const bool isSourceFile = QFileInfo(sourcePath).isFile();
     QVector<QString> vector({""});
-    if (QFileInfo(sourcePath).isFile()) {
-        if (!QDir::match(nameFilters, QFileInfo(sourcePath).fileName()))
-            vector.append("/");
+    if (isSourceFile) {
+        vector.append(QString());
     } else {
         for (int i = 0; i < vector.size(); ++i) {
             const QString& path = sourcePath + vector[i];
@@ -186,16 +200,19 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& sourcePath,
     }
 
     for (int i = 1; i < vector.size(); ++i) {
-        const QString& fullPath = sourcePath + vector[i];
+        const QString& fullPath = isSourceFile ? sourcePath : (sourcePath + vector[i]);
         const bool isDir = QFileInfo(fullPath).isDir();
-        const QByteArray& archivePath = cleanArchivePath(rootDirectory, vector[i], isDir);
+        const QByteArray& archivePath = isSourceFile
+                ? cleanArchivePath(rootDirectory, QFileInfo(sourcePath).fileName())
+                : cleanArchivePath(rootDirectory, vector[i], isDir);
 
         if (isDir) {
             if (!mz_zip_add_mem_to_archive_file_in_place_v2(
                         destinationZipPath.toUtf8().constData(),
                         archivePath.constData(),
-                        nullptr, 0, nullptr, 0, 0, nullptr))
+                        nullptr, 0, nullptr, 0, 0, nullptr)) {
                 RETURN_ERROR("Couldn't add the directory entry: %1.", fullPath)
+            }
         } else {
             if (!mz_zip_writer_add_file(&zip, archivePath, fullPath.toUtf8().constData(),
                                         nullptr, 0, compressionLevel)) {
