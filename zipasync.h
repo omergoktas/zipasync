@@ -39,12 +39,12 @@ enum CompressionLevel {
     Ultra         = 10
 };
 
-QFuture<int> zip(const QString& sourcePath, const QString& destinationZipPath,
-                 const QString& rootDirectory = QString(), const QStringList& nameFilters = {},
-                 QDir::Filters filters = QDir::NoFilter, CompressionLevel compressionLevel = Medium,
-                 bool append = true);
+QFuture<size_t> zip(const QString& sourcePath, const QString& destinationZipPath,
+                    const QString& rootDirectory = QString(), const QStringList& nameFilters = {},
+                    QDir::Filters filters = QDir::NoFilter, CompressionLevel compressionLevel = Medium,
+                    bool append = true);
 
-QFuture<int> unzip(const QString& sourceZipPath, const QString& destinationPath, bool overwrite = false);
+QFuture<size_t> unzip(const QString& sourceZipPath, const QString& destinationPath, bool overwrite = false);
 } // ZipAsync
 
 #endif // ZIPASYNC_H

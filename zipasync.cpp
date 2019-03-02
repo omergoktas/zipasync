@@ -23,6 +23,7 @@
 #include <zipasync.h>
 #include <async.h>
 #include <miniz.h>
+#include <vector>
 #include <QFileInfo>
 
 #define INIT_FUTURE(ret, futureInterface) \
@@ -48,7 +49,7 @@ future->setProgressValue(0);
                 mz_zip_writer_finalize_archive(&zip); \
                 mz_zip_writer_end(&zip); \
             } \
-            return -1; \
+            return 0; \
         } \
         future->setProgressValue(progress); \
     } \
@@ -60,7 +61,7 @@ future->setProgressValue(0);
         if (future->isPaused()) \
             future->waitForResume(); \
         if (future->isCanceled()) \
-            return -1; \
+            return 0; \
         future->reportResult(result); \
     } \
 }
@@ -69,8 +70,8 @@ future->setProgressValue(0);
 { \
     future->setProgressValueAndText(100, \
         Internal::combineStringArguments(QT_TRANSLATE_NOOP("ZipAsync", msg), ##__VA_ARGS__)); \
-    future->reportResult(-1); \
-    return -1; \
+    future->reportResult(size_t(0)); \
+    return 0; \
 }
 
 #define DONE(result) \
@@ -90,9 +91,9 @@ bool touch(const QString& filePath)
     return file.open(QIODevice::WriteOnly | QIODevice::Append);
 }
 
-QFuture<int> invalidFuture()
+QFuture<size_t> invalidFuture()
 {
-    static QFutureInterface<int> future(QFutureInterfaceBase::Canceled);
+    static QFutureInterface<size_t> future(QFutureInterfaceBase::Canceled);
     return future.future();
 }
 
@@ -149,23 +150,25 @@ QByteArray cleanArchivePath(const QString& rootDirectory, const QString& relativ
     return archivePath.toUtf8();
 }
 
-int zip(QFutureInterfaceBase* futureInterface, const QString& sourcePath,
-        const QString& destinationZipPath, const QString& rootDirectory, const QStringList& nameFilters,
-        QDir::Filters filters, CompressionLevel compressionLevel, bool append)
+size_t zip(QFutureInterfaceBase* futureInterface, const QString& sourcePath,
+           const QString& destinationZipPath, const QString& rootDirectory, const QStringList& nameFilters,
+           QDir::Filters filters, CompressionLevel compressionLevel, bool append)
 {
-    INIT_FUTURE(int, futureInterface)
+    INIT_FUTURE(size_t, futureInterface)
 
-    const bool isSourceFile = QFileInfo(sourcePath).isFile();
-    QVector<QString> vector({""});
-    if (isSourceFile) {
-        vector.append(QString());
+    std::vector<QString> vector({""});
+    const bool sourceIsAFile = QFileInfo(sourcePath).isFile();
+
+    // Recursive entry resolution
+    if (sourceIsAFile) {
+        vector.push_back(QString());
     } else {
-        for (int i = 0; i < vector.size(); ++i) {
+        for (size_t i = 0; i < vector.size(); ++i) {
             const QString& path = sourcePath + vector[i];
             if (QFileInfo(path).isDir()) {
                 for (const QString& entryName : QDir(path).entryList({}, filters)) {
                     if (!QDir::match(nameFilters, entryName) || !QFileInfo(path + '/' + entryName).isFile())
-                        vector.append(vector[i] + '/' + entryName);
+                        vector.push_back(vector[i] + '/' + entryName);
                 }
             }
             if (vector.size() > 1)
@@ -183,6 +186,7 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& sourcePath,
     qreal step = (99. - progress) / (vector.size() - 1);
     memset(&zip, 0, sizeof(zip));
 
+    // Archive initialization
     if (append && QFileInfo::exists(destinationZipPath)) {
         if (!mz_zip_reader_init_file_v2(
                     &zip,
@@ -199,26 +203,26 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& sourcePath,
             RETURN_ERROR("Couldn't initialize a zip writer for: %1.", destinationZipPath)
     }
 
-    for (int i = 1; i < vector.size(); ++i) {
-        const QString& fullPath = isSourceFile ? sourcePath : (sourcePath + vector[i]);
-        const bool isDir = QFileInfo(fullPath).isDir();
-        const QByteArray& archivePath = isSourceFile
+    // Compressing and adding entries
+    for (size_t i = 1; i < vector.size(); ++i) {
+        const QString& path = sourceIsAFile ? sourcePath : (sourcePath + vector[i]);
+        const bool isDir = QFileInfo(path).isDir();
+        const QByteArray& archivePath = sourceIsAFile
                 ? cleanArchivePath(rootDirectory, QFileInfo(sourcePath).fileName())
                 : cleanArchivePath(rootDirectory, vector[i], isDir);
 
         if (isDir) {
-            if (!mz_zip_add_mem_to_archive_file_in_place_v2(
-                        destinationZipPath.toUtf8().constData(),
-                        archivePath.constData(),
-                        nullptr, 0, nullptr, 0, 0, nullptr)) {
-                RETURN_ERROR("Couldn't add the directory entry: %1.", fullPath)
+            if (!mz_zip_writer_add_mem(&zip, archivePath.constData(), nullptr, 0, 0)) {
+                mz_zip_writer_finalize_archive(&zip);
+                mz_zip_writer_end(&zip);
+                RETURN_ERROR("Couldn't add a directory entry for: %1.", path)
             }
         } else {
-            if (!mz_zip_writer_add_file(&zip, archivePath, fullPath.toUtf8().constData(),
+            if (!mz_zip_writer_add_file(&zip, archivePath, path.toUtf8().constData(),
                                         nullptr, 0, compressionLevel)) {
                 mz_zip_writer_finalize_archive(&zip);
                 mz_zip_writer_end(&zip);
-                RETURN_ERROR("Couldn't compress the file: %1.", fullPath)
+                RETURN_ERROR("Couldn't compress the file: %1.", path)
             }
         }
 
@@ -226,6 +230,7 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& sourcePath,
         REPORT_PROGRESS_CLEAN(progress, false)
     }
 
+    // Archive finalization
     if (!mz_zip_writer_finalize_archive(&zip)) {
         mz_zip_writer_end(&zip);
         RETURN_ERROR("Couldn't finalize the zip writer.")
@@ -236,20 +241,18 @@ int zip(QFutureInterfaceBase* futureInterface, const QString& sourcePath,
     DONE(vector.size() - 1)
 }
 
-int unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath,
-          const QString& destinationPath, bool overwrite)
+size_t unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath,
+             const QString& destinationPath, bool overwrite)
 {
-    auto future = static_cast<QFutureInterface<int>*>(futureInterface);
-    future->setProgressRange(0, 100);
-    future->setProgressValue(0);
+    INIT_FUTURE(size_t, futureInterface)
 
     mz_zip_archive zip;
     memset(&zip, 0, sizeof(zip));
     if (!mz_zip_reader_init_file_v2(&zip, sourceZipPath.toUtf8().constData(), 0, 0, 0))
         RETURN_ERROR("Couldn't initialize a zip reader.")
 
-    mz_uint processedEntryCount = 0;
-    mz_uint numberOfFiles = mz_zip_reader_get_num_files(&zip);
+    size_t processedEntryCount = 0;
+    size_t numberOfFiles = mz_zip_reader_get_num_files(&zip);
 
     if (numberOfFiles == 0) {
         mz_zip_reader_end(&zip);
@@ -257,7 +260,7 @@ int unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath,
     }
 
     // Iterate for dirs
-    for (mz_uint i = 0; i < numberOfFiles; ++i) {
+    for (size_t i = 0; i < numberOfFiles; ++i) {
         mz_zip_archive_file_stat fileStat;
         if (!mz_zip_reader_file_stat(&zip, i, &fileStat)) {
             mz_zip_reader_end(&zip);
@@ -287,7 +290,7 @@ int unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath,
     }
 
     // Iterate for files
-    for (mz_uint i = 0; i < numberOfFiles; ++i) {
+    for (size_t i = 0; i < numberOfFiles; ++i) {
         mz_zip_archive_file_stat fileStat;
         if (!mz_zip_reader_file_stat(&zip, i, &fileStat)) {
             mz_zip_reader_end(&zip);
@@ -339,7 +342,7 @@ int unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath,
         If the function fails for some reason, before spawning a separate worker thread, then it
         returns an invalid future (in "canceled" state) in the first place. If the worker thread is
         spawned and the zip operation has failed for some reason, then the future returned by this
-        function will emit resultReadyAt signal (via QFutureWatcher) with -1 as the result. Also the
+        function will emit resultReadyAt signal (via QFutureWatcher) with 0 as the result. Also the
         progress value will be set to 100 and the progress text will be set to the appropriate error
         string. So you can catch those error states via QFutureWatcher's progressTextChanged and
         progressValueChanged signals. You can also translate the error string by passing it to a
@@ -362,13 +365,17 @@ int unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath,
         being completely compressed) When the operation is finished, the finished signal is emitted
         alongside with the progressValueChanged signal that the progress value is set to 100. As we
         mentioned above, if any error occurs at any point in the operation's life time, a
-        resultReadyAt signal will be emitted with -1 as the result and the progress value will be
+        resultReadyAt signal will be emitted with 0 as the result and the progress value will be
         set to 100 (which means the progressValueChanged signal will also be emitted) and finally
         the operation will be finished.
 
         Other facilities, like pause/resume and cancel these are provided by the QFuture mechanism
         may also be used at any arbitrary point in the operation's life time in order to pause/resume
         or cancel the operation. Appropriate signals will also be emitted.
+
+        There will be no additional limitations arising from the use of this library on compressed
+        or extracted archive files. If there are any limitations that you encounter, this will be
+        due to the "miniz" library, which we use as the base implementation.
 
     sourcePath:
         This could be either a file or a directory, but it must be exists and readable in any case.
@@ -429,9 +436,9 @@ int unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath,
         If destinationZipPath parameter points out to a nonexistent file, then append option doesn't
         have any effect.
 */
-QFuture<int> zip(const QString& sourcePath, const QString& destinationZipPath,
-                 const QString& rootDirectory, const QStringList& nameFilters,
-                 QDir::Filters filters, CompressionLevel compressionLevel, bool append)
+QFuture<size_t> zip(const QString& sourcePath, const QString& destinationZipPath,
+                    const QString& rootDirectory, const QStringList& nameFilters,
+                    QDir::Filters filters, CompressionLevel compressionLevel, bool append)
 {
     if (!QFileInfo::exists(sourcePath)) {
         qWarning("WARNING: The source path doesn't exist");
@@ -477,7 +484,7 @@ QFuture<int> zip(const QString& sourcePath, const QString& destinationZipPath,
         If the function fails for some reason, before spawning a separate worker thread, then it
         returns an invalid future (in "canceled" state) in the first place. If the worker thread is
         spawned and the unzip operation has failed for some reason, then the future returned by this
-        function will emit resultReadyAt signal (via QFutureWatcher) with -1 as the result. Also the
+        function will emit resultReadyAt signal (via QFutureWatcher) with 0 as the result. Also the
         progress value will be set to 100 and the progress text will be set to the appropriate error
         string. So you can catch those error states via QFutureWatcher's progressTextChanged and
         progressValueChanged signals. You can also translate the error string by passing it to a
@@ -489,17 +496,16 @@ QFuture<int> zip(const QString& sourcePath, const QString& destinationZipPath,
         progress range for the operation is between 0 and 100. When the operation is finished, the
         resultReadyAt signal is emitted with a single result that is the total number of entries
         extracted from the zip archive. Overall, this function only returns a single result, either
-        it is -1 for errors, or the total number of entries extracted from the zip archive if it is
+        it is 0 for errors, or the total number of entries extracted from the zip archive if it is
         successful. Also the finished signal is emitted at the end.
 
         Other facilities, like pause/resume and cancel these are provided by the QFuture mechanism
         may also be used at any arbitrary point in the operation's life time in order to pause/resume
         or cancel the operation. Appropriate signals will also be emitted.
 
-        There is no size or total number of files limitations because of this ZipAsync implementation
-        on this function for the zip archive that we are going to extract with this function. If
-        there are such limitations, they may only be exists because of the miniz implementation that
-        we use as the base zip library. Review miniz library for more information on this matter.
+        There will be no additional limitations arising from the use of this library on compressed
+        or extracted archive files. If there are any limitations that you encounter, this will be
+        due to the "miniz" library, which we use as the base implementation.
 
     sourceZipPath:
         This points out to a zip archive file path where all the content of this zip archive is
@@ -516,7 +522,7 @@ QFuture<int> zip(const QString& sourcePath, const QString& destinationZipPath,
         at any point if any file in the source zip archive is already exists on the disk at the
         destination folder (within the destinationPath).
 */
-QFuture<int> unzip(const QString& sourceZipPath, const QString& destinationPath, bool overwrite)
+QFuture<size_t> unzip(const QString& sourceZipPath, const QString& destinationPath, bool overwrite)
 {
     if (!QFileInfo::exists(sourceZipPath)) {
         qWarning("WARNING: The source zip path doesn't exist");
