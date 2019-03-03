@@ -40,8 +40,8 @@ enum CompressionLevel {
 };
 
 QFuture<size_t> zip(const QString& sourcePath, const QString& destinationZipPath,
-                    const QString& rootDirectory = QString(), const QStringList& nameFilters = {},
-                    QDir::Filters filters = QDir::NoFilter, CompressionLevel compressionLevel = Medium,
+                    const QString& rootDirectory = QString(), CompressionLevel compressionLevel = Medium,
+                    QDir::Filters filters = QDir::NoFilter, const QStringList& nameFilters = {},
                     bool append = true);
 
 QFuture<size_t> unzip(const QString& sourceZipPath, const QString& destinationPath, bool overwrite = false);

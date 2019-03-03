@@ -156,34 +156,35 @@ size_t zip(QFutureInterfaceBase* futureInterface, const QString& sourcePath,
 {
     INIT_FUTURE(size_t, futureInterface)
 
-    std::vector<QString> vector({""});
+    QScopedPointer<std::vector<QString>> vector(new std::vector<QString>{""});
     const bool sourceIsAFile = QFileInfo(sourcePath).isFile();
 
     // Recursive entry resolution
     if (sourceIsAFile) {
-        vector.push_back(QString());
+        vector->push_back(QString());
     } else {
-        for (size_t i = 0; i < vector.size(); ++i) {
-            const QString& path = sourcePath + vector[i];
+        for (size_t i = 0; i < vector->size(); ++i) {
+            const QString& path = sourcePath + vector->at(i);
             if (QFileInfo(path).isDir()) {
                 for (const QString& entryName : QDir(path).entryList({}, filters)) {
                     if (!QDir::match(nameFilters, entryName) || !QFileInfo(path + '/' + entryName).isFile())
-                        vector.push_back(vector[i] + '/' + entryName);
+                        vector->push_back(vector->at(i) + '/' + entryName);
                 }
             }
-            if (vector.size() > 1)
-                REPORT_RESULT(vector.size() - 1)
+            if (vector->size() > 1)
+                REPORT_RESULT(vector->size() - 1)
         }
     }
+    vector->shrink_to_fit();
 
-    if (vector.size() <= 1)
+    if (vector->size() <= 1)
         RETURN_ERROR("Nothing to compress, the source directory is empty.")
 
-    REPORT_NOW(1, vector.size() - 1)
+    REPORT_NOW(1, vector->size() - 1)
 
     mz_zip_archive zip;
     qreal progress = 1;
-    qreal step = (99. - progress) / (vector.size() - 1);
+    qreal step = (99. - progress) / (vector->size() - 1);
     memset(&zip, 0, sizeof(zip));
 
     // Archive initialization
@@ -192,24 +193,24 @@ size_t zip(QFutureInterfaceBase* futureInterface, const QString& sourcePath,
                     &zip,
                     destinationZipPath.toUtf8().constData(),
                     MZ_ZIP_FLAG_DO_NOT_SORT_CENTRAL_DIRECTORY, 0, 0)) {
-            RETURN_ERROR("Couldn't initialize a zip reader for: %1.", destinationZipPath)
+            RETURN_ERROR("Couldn't initialize a zip reader.")
         }
         if (!mz_zip_writer_init_from_reader_v2(&zip, destinationZipPath.toUtf8().constData(), 0)) {
             mz_zip_reader_end(&zip);
-            RETURN_ERROR("Couldn't initialize a zip writer for: %1.", destinationZipPath)
+            RETURN_ERROR("Couldn't initialize a zip writer.")
         }
     } else {
         if (!mz_zip_writer_init_file_v2(&zip, destinationZipPath.toUtf8().constData(), 0, 0))
-            RETURN_ERROR("Couldn't initialize a zip writer for: %1.", destinationZipPath)
+            RETURN_ERROR("Couldn't initialize a zip writer.")
     }
 
     // Compressing and adding entries
-    for (size_t i = 1; i < vector.size(); ++i) {
-        const QString& path = sourceIsAFile ? sourcePath : (sourcePath + vector[i]);
+    for (size_t i = 1; i < vector->size(); ++i) {
+        const QString& path = sourceIsAFile ? sourcePath : (sourcePath + vector->at(i));
         const bool isDir = QFileInfo(path).isDir();
         const QByteArray& archivePath = sourceIsAFile
                 ? cleanArchivePath(rootDirectory, QFileInfo(sourcePath).fileName())
-                : cleanArchivePath(rootDirectory, vector[i], isDir);
+                : cleanArchivePath(rootDirectory, vector->at(i), isDir);
 
         if (isDir) {
             if (!mz_zip_writer_add_mem(&zip, archivePath.constData(), nullptr, 0, 0)) {
@@ -238,7 +239,7 @@ size_t zip(QFutureInterfaceBase* futureInterface, const QString& sourcePath,
     if (!mz_zip_writer_end(&zip))
         RETURN_ERROR("Couldn't clean the zip writer cache.")
 
-    DONE(vector.size() - 1)
+    DONE(vector->size() - 1)
 }
 
 size_t unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath,
@@ -256,7 +257,7 @@ size_t unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath
 
     if (numberOfFiles == 0) {
         mz_zip_reader_end(&zip);
-        RETURN_ERROR("Archive is either invalid or empty.")
+        RETURN_ERROR("The archive is either invalid or empty.")
     }
 
     // Iterate for dirs
@@ -375,7 +376,8 @@ size_t unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath
 
         There will be no additional limitations arising from the use of this library on compressed
         or extracted archive files. If there are any limitations that you encounter, this will be
-        due to the "miniz" library, which we use as the base implementation.
+        due to the "miniz" library, which we use as the base implementation. (Limitations such as
+        maximum number of files to be compressed or maximum size for an archive file)
 
     sourcePath:
         This could be either a file or a directory, but it must be exists and readable in any case.
@@ -437,8 +439,8 @@ size_t unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath
         have any effect.
 */
 QFuture<size_t> zip(const QString& sourcePath, const QString& destinationZipPath,
-                    const QString& rootDirectory, const QStringList& nameFilters,
-                    QDir::Filters filters, CompressionLevel compressionLevel, bool append)
+                    const QString& rootDirectory, CompressionLevel compressionLevel,
+                    QDir::Filters filters, const QStringList& nameFilters, bool append)
 {
     if (!QFileInfo::exists(sourcePath)) {
         qWarning("WARNING: The source path doesn't exist");
@@ -505,7 +507,8 @@ QFuture<size_t> zip(const QString& sourcePath, const QString& destinationZipPath
 
         There will be no additional limitations arising from the use of this library on compressed
         or extracted archive files. If there are any limitations that you encounter, this will be
-        due to the "miniz" library, which we use as the base implementation.
+        due to the "miniz" library, which we use as the base implementation. (Limitations such as
+        maximum number of files to be compressed or maximum size for an archive file)
 
     sourceZipPath:
         This points out to a zip archive file path where all the content of this zip archive is
