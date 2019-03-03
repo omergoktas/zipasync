@@ -45,6 +45,7 @@ QFuture<size_t> zip(const QString& sourcePath, const QString& destinationZipPath
                     bool append = true);
 
 QFuture<size_t> unzip(const QString& sourceZipPath, const QString& destinationPath, bool overwrite = false);
+
 } // ZipAsync
 
 #endif // ZIPASYNC_H
