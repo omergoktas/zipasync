@@ -31,6 +31,8 @@ namespace ZipAsync {
 
 namespace Internal {
 
+enum { INITIAL_NUMBER_OF_ENTRIES = 40960 };
+
 bool touch(const QString& filePath)
 {
     QFile file(filePath);
@@ -85,8 +87,9 @@ size_t zip(QFutureInterfaceBase* futureInterface, const QString& sourcePath,
 {
     INITIALIZE(size_t, futureInterface)
 
-    QScopedPointer<std::vector<QString>> vector(new std::vector<QString>{""});
     const bool sourceIsAFile = QFileInfo(sourcePath).isFile();
+    QScopedPointer<std::vector<QString>> vector(new std::vector<QString>({""}));
+    vector->reserve(INITIAL_NUMBER_OF_ENTRIES);
 
     // Recursive entry resolution
     if (sourceIsAFile) {
@@ -182,15 +185,15 @@ size_t unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath
         CRASH("ZipAsync", "Couldn't initialize a zip reader.")
 
     size_t processedEntryCount = 0;
-    size_t numberOfFiles = mz_zip_reader_get_num_files(&zip);
+    size_t numberOfEntries = mz_zip_reader_get_num_files(&zip);
 
-    if (numberOfFiles == 0) {
+    if (numberOfEntries == 0) {
         mz_zip_reader_end(&zip);
         CRASH("ZipAsync", "The archive is either invalid or empty.")
     }
 
     // Iterate for dirs
-    for (size_t i = 0; i < numberOfFiles; ++i) {
+    for (size_t i = 0; i < numberOfEntries; ++i) {
         mz_zip_archive_file_stat fileStat;
         if (!mz_zip_reader_file_stat(&zip, i, &fileStat)) {
             mz_zip_reader_end(&zip);
@@ -215,12 +218,12 @@ size_t unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath
                                  destinationPath + '/' + fileStat.m_filename)
             }
             processedEntryCount++;
-            REPORT_PROGRESS_SAFE(100 * processedEntryCount / numberOfFiles, zip)
+            REPORT_PROGRESS_SAFE(100 * processedEntryCount / numberOfEntries, zip)
         }
     }
 
     // Iterate for files
-    for (size_t i = 0; i < numberOfFiles; ++i) {
+    for (size_t i = 0; i < numberOfEntries; ++i) {
         mz_zip_archive_file_stat fileStat;
         if (!mz_zip_reader_file_stat(&zip, i, &fileStat)) {
             mz_zip_reader_end(&zip);
@@ -247,7 +250,7 @@ size_t unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath
                       destinationPath + '/' + fileStat.m_filename)
             }
             processedEntryCount++;
-            REPORT_PROGRESS_SAFE(100 * processedEntryCount / numberOfFiles, zip)
+            REPORT_PROGRESS_SAFE(100 * processedEntryCount / numberOfEntries, zip)
         }
     }
 
