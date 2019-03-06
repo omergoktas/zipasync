@@ -25,7 +25,9 @@
 #include <miniz.h>
 #include <report.h>
 #include <vector>
+
 #include <QFileInfo>
+#include <QTemporaryFile>
 
 namespace ZipAsync {
 
@@ -43,6 +45,25 @@ QFuture<size_t> invalidFuture()
 {
     static QFutureInterface<size_t> future(QFutureInterfaceBase::Canceled);
     return future.future();
+}
+
+void copyResourceFile(QString& resourcePath, QTemporaryFile& tmpFile)
+{
+    if (resourcePath.isEmpty() || resourcePath[0] != QLatin1Char(':'))
+        return;
+
+    QFile resourceFile(resourcePath);
+    if (!resourceFile.open(QFile::ReadOnly)) {
+        qWarning("WARNING: Cannot open file %s", resourcePath.toUtf8().constData());
+        return;
+    }
+    if (!tmpFile.open(QFile::ReadOnly)) {
+        qWarning("WARNING: Cannot open a temporary file");
+        return;
+    }
+    tmpFile.write(resourceFile.readAll());
+    tmpFile.close();
+    resourcePath = tmpFile.fileName();
 }
 
 QByteArray cleanArchivePath(const QString& rootDirectory, const QString& relativePath)
@@ -165,9 +186,13 @@ size_t zipSync(const QString& sourcePath, const QString& destinationZipPath,
 
 size_t unzipSync(const QString& sourceZipPath, const QString& destinationPath, bool overwrite)
 {
+    QTemporaryFile tempFile;
+    QString sourceZipFinalPath(sourceZipPath);
+    copyResourceFile(sourceZipFinalPath, tempFile);
+
     mz_zip_archive zip;
     memset(&zip, 0, sizeof(zip));
-    if (!mz_zip_reader_init_file_v2(&zip, sourceZipPath.toUtf8().constData(), 0, 0, 0))
+    if (!mz_zip_reader_init_file_v2(&zip, sourceZipFinalPath.toUtf8().constData(), 0, 0, 0))
         WARNING("Couldn't initialize a zip reader.")
 
     size_t numberOfEntries = mz_zip_reader_get_num_files(&zip);
@@ -339,9 +364,13 @@ size_t unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath
 {
     INITIALIZE(size_t, futureInterface)
 
+    QTemporaryFile tempFile;
+    QString sourceZipFinalPath(sourceZipPath);
+    copyResourceFile(sourceZipFinalPath, tempFile);
+
     mz_zip_archive zip;
     memset(&zip, 0, sizeof(zip));
-    if (!mz_zip_reader_init_file_v2(&zip, sourceZipPath.toUtf8().constData(), 0, 0, 0))
+    if (!mz_zip_reader_init_file_v2(&zip, sourceZipFinalPath.toUtf8().constData(), 0, 0, 0))
         CRASH("ZipAsync", "Couldn't initialize a zip reader.")
 
     size_t processedEntryCount = 0;
@@ -553,7 +582,7 @@ size_t unzipSync(const QString& sourceZipPath, const QString& destinationPath, b
         directory with the same name of the source directory you can use the rootDirectory parameter.
         You can also use the rootDirectory parameter to specify another root directory name (base
         path or however you name it) other than the source directory name. Compression occurs
-        recursively.
+        recursively. We don't support Qt Resource files and folders yet, on this parameter.
 
     destinationZipPath:
         This points out to a zip file path. If the zip file is already exists, regardless of whether
@@ -680,7 +709,7 @@ QFuture<size_t> zip(const QString& sourcePath, const QString& destinationZipPath
     sourceZipPath:
         This points out to a zip archive file path where all the content of this zip archive is
         going to be extracted into the destination path. And the zip archive must be exists and
-        valid. Otherwise extraction fails.
+        valid. Otherwise extraction fails. This path could be a Qt Resource path, e.g. ":/file.zip"
 
     destinationPath:
         This must be a directory. It is the folder where all the content of the root directory of
