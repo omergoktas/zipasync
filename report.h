@@ -13,6 +13,10 @@
     future->reportResult(result); \
     return result;
 
+#define WARNING(msg, ...) { \
+    qWarning(msg, ##__VA_ARGS__); \
+    return 0; }
+
 #define CRASH(context, msg, ...) { \
     future->setProgressValueAndText(100, \
     combineStringArguments(QT_TRANSLATE_NOOP(context, msg), ##__VA_ARGS__)); \

@@ -81,6 +81,166 @@ QByteArray cleanArchivePath(const QString& rootDirectory, const QString& relativ
     return archivePath.toUtf8();
 }
 
+size_t zipSync(const QString& sourcePath, const QString& destinationZipPath,
+               const QString& rootDirectory, const QStringList& nameFilters,
+               QDir::Filters filters, CompressionLevel compressionLevel, bool append)
+{
+    const bool sourceIsAFile = QFileInfo(sourcePath).isFile();
+    QScopedPointer<std::vector<QString>> vector(new std::vector<QString>({""}));
+    vector->reserve(INITIAL_NUMBER_OF_ENTRIES);
+
+    // Recursive entry resolution
+    if (sourceIsAFile) {
+        vector->push_back(QString());
+    } else {
+        for (size_t i = 0; i < vector->size(); ++i) {
+            const QString& path = sourcePath + vector->at(i);
+            if (QFileInfo(path).isDir()) {
+                for (const QString& entryName : QDir(path).entryList({}, filters)) {
+                    if (!QDir::match(nameFilters, entryName) || !QFileInfo(path + '/' + entryName).isFile())
+                        vector->push_back(vector->at(i) + '/' + entryName);
+                }
+            }
+        }
+    }
+    vector->shrink_to_fit();
+
+    if (vector->size() <= 1)
+        WARNING("Nothing to compress, the source directory is empty.")
+
+    mz_zip_archive zip;
+    memset(&zip, 0, sizeof(zip));
+
+    // Archive initialization
+    if (append && QFileInfo::exists(destinationZipPath)) {
+        if (!mz_zip_reader_init_file_v2(
+                    &zip,
+                    destinationZipPath.toUtf8().constData(),
+                    MZ_ZIP_FLAG_DO_NOT_SORT_CENTRAL_DIRECTORY, 0, 0)) {
+            WARNING("Couldn't initialize a zip reader.")
+        }
+        if (!mz_zip_writer_init_from_reader_v2(&zip, destinationZipPath.toUtf8().constData(), 0)) {
+            mz_zip_reader_end(&zip);
+            WARNING("Couldn't initialize a zip writer.")
+        }
+    } else {
+        if (!mz_zip_writer_init_file_v2(&zip, destinationZipPath.toUtf8().constData(), 0, 0))
+            WARNING("Couldn't initialize a zip writer.")
+    }
+
+    // Compressing and adding entries
+    for (size_t i = 1; i < vector->size(); ++i) {
+        const QString& path = sourceIsAFile ? sourcePath : (sourcePath + vector->at(i));
+        const bool isDir = QFileInfo(path).isDir();
+        const QByteArray& archivePath = sourceIsAFile
+                ? cleanArchivePath(rootDirectory, QFileInfo(sourcePath).fileName())
+                : cleanArchivePath(rootDirectory, vector->at(i), isDir);
+
+        if (isDir) {
+            if (!mz_zip_writer_add_mem(&zip, archivePath.constData(), nullptr, 0, 0)) {
+                mz_zip_writer_finalize_archive(&zip);
+                mz_zip_writer_end(&zip);
+                WARNING("Couldn't add a directory entry for: %s.", path.toUtf8().constData())
+            }
+        } else {
+            if (!mz_zip_writer_add_file(&zip, archivePath, path.toUtf8().constData(),
+                                        nullptr, 0, compressionLevel)) {
+                mz_zip_writer_finalize_archive(&zip);
+                mz_zip_writer_end(&zip);
+                WARNING("Couldn't compress the file: %s.", path.toUtf8().constData())
+            }
+        }
+    }
+
+    // Archive finalization
+    if (!mz_zip_writer_finalize_archive(&zip)) {
+        mz_zip_writer_end(&zip);
+        WARNING("Couldn't finalize the zip writer.")
+    }
+    if (!mz_zip_writer_end(&zip))
+        WARNING("Couldn't clean the zip writer cache.")
+
+    return vector->size() - 1;
+}
+
+size_t unzipSync(const QString& sourceZipPath, const QString& destinationPath, bool overwrite)
+{
+    mz_zip_archive zip;
+    memset(&zip, 0, sizeof(zip));
+    if (!mz_zip_reader_init_file_v2(&zip, sourceZipPath.toUtf8().constData(), 0, 0, 0))
+        WARNING("Couldn't initialize a zip reader.")
+
+    size_t numberOfEntries = mz_zip_reader_get_num_files(&zip);
+
+    if (numberOfEntries == 0) {
+        mz_zip_reader_end(&zip);
+        WARNING("The archive is either invalid or empty.")
+    }
+
+    // Iterate for dirs
+    for (size_t i = 0; i < numberOfEntries; ++i) {
+        mz_zip_archive_file_stat fileStat;
+        if (!mz_zip_reader_file_stat(&zip, i, &fileStat)) {
+            mz_zip_reader_end(&zip);
+            WARNING("Archive is broken.")
+        }
+        if (!fileStat.m_is_supported) {
+            mz_zip_reader_end(&zip);
+            WARNING("Archive isn't supported.")
+        }
+        if (fileStat.m_is_directory) {
+            if (!overwrite) {
+                const bool isBase = QString(fileStat.m_filename).count('/') <= 1;
+                if (isBase && QFileInfo::exists(destinationPath + '/' + fileStat.m_filename)) {
+                    mz_zip_reader_end(&zip);
+                    WARNING("Extraction canceled, dir already exists: %s.",
+                            (destinationPath + '/' + fileStat.m_filename).toUtf8().constData())
+                }
+            }
+            if (!QDir(destinationPath).mkpath(fileStat.m_filename)) {
+                mz_zip_reader_end(&zip);
+                WARNING("Directory creation on disk is failed for: %s.",
+                        (destinationPath + '/' + fileStat.m_filename).toUtf8().constData())
+            }
+        }
+    }
+
+    // Iterate for files
+    for (size_t i = 0; i < numberOfEntries; ++i) {
+        mz_zip_archive_file_stat fileStat;
+        if (!mz_zip_reader_file_stat(&zip, i, &fileStat)) {
+            mz_zip_reader_end(&zip);
+            WARNING("Archive is broken.")
+        }
+        if (!fileStat.m_is_supported) {
+            mz_zip_reader_end(&zip);
+            WARNING("Archive isn't supported.")
+        }
+        if (!fileStat.m_is_directory) {
+            if (!overwrite) {
+                const bool isBase = QString(fileStat.m_filename).count('/') < 1;
+                if (isBase && QFileInfo::exists(destinationPath + '/' + fileStat.m_filename)) {
+                    mz_zip_reader_end(&zip);
+                    WARNING("Extraction canceled, file already exists: %s.",
+                            (destinationPath + '/' + fileStat.m_filename).toUtf8().constData())
+                }
+            }
+            if (!mz_zip_reader_extract_to_file(
+                        &zip, i, (destinationPath + '/' + fileStat.m_filename).toUtf8().constData(),
+                        0)) {
+                mz_zip_reader_end(&zip);
+                WARNING("Extraction failed, file: %s.",
+                        (destinationPath + '/' + fileStat.m_filename).toUtf8().constData())
+            }
+        }
+    }
+
+    if (!mz_zip_reader_end(&zip))
+        WARNING("Couldn't clean the zip reader cache.")
+
+    return numberOfEntries;
+}
+
 size_t zip(QFutureInterfaceBase* futureInterface, const QString& sourcePath,
            const QString& destinationZipPath, const QString& rootDirectory, const QStringList& nameFilters,
            QDir::Filters filters, CompressionLevel compressionLevel, bool append)
@@ -261,6 +421,77 @@ size_t unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath
 }
 
 } // Internal
+
+size_t zipSync(const QString& sourcePath, const QString& destinationZipPath,
+               const QString& rootDirectory, CompressionLevel compressionLevel,
+               QDir::Filters filters, const QStringList& nameFilters, bool append)
+{
+    if (!QFileInfo::exists(sourcePath)) {
+        qWarning("WARNING: The source path doesn't exist");
+        return 0;
+    }
+
+    if (!QFileInfo(sourcePath).isReadable()) {
+        qWarning("WARNING: The source path isn't readable");
+        return 0;
+    }
+
+    if (QFileInfo::exists(destinationZipPath) && QFileInfo(destinationZipPath).isDir()) {
+        qWarning("WARNING: The destination zip path cannot be a directory");
+        return 0;
+    }
+
+    const bool destinationZipPathExists = QFileInfo::exists(destinationZipPath);
+
+    if (!Internal::touch(destinationZipPath)) {
+        qWarning("WARNING: The destination zip path isn't writable");
+        return 0;
+    }
+
+    if (!destinationZipPathExists)
+        QFile::remove(destinationZipPath);
+
+    if (filters == QDir::NoFilter)
+        filters = QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot;
+
+    return Internal::zipSync(sourcePath, destinationZipPath, rootDirectory,
+                             nameFilters, filters, compressionLevel, append);
+}
+
+size_t unzipSync(const QString& sourceZipPath, const QString& destinationPath, bool overwrite)
+{
+    if (!QFileInfo::exists(sourceZipPath)) {
+        qWarning("WARNING: The source zip path doesn't exist");
+        return 0;
+    }
+
+    if (QFileInfo(sourceZipPath).isDir()) {
+        qWarning("WARNING: The source zip path cannot be a directory");
+        return 0;
+    }
+
+    if (!QFileInfo(sourceZipPath).isReadable()) {
+        qWarning("WARNING: The source zip path isn't readable");
+        return 0;
+    }
+
+    if (!QFileInfo::exists(destinationPath)) {
+        qWarning("WARNING: The destination path doesn't exist");
+        return 0;
+    }
+
+    if (!QFileInfo(destinationPath).isDir()) {
+        qWarning("WARNING: The destination path cannot be a file");
+        return 0;
+    }
+
+    if (!QFileInfo(destinationPath).isWritable()) {
+        qWarning("WARNING: The destination path isn't writable");
+        return 0;
+    }
+
+    return Internal::unzipSync(sourceZipPath, destinationPath, overwrite);
+}
 
 /*!
     Summary:
