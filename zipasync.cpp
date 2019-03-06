@@ -57,7 +57,7 @@ void copyResourceFile(QString& resourcePath, QTemporaryFile& tmpFile)
         qWarning("WARNING: Cannot open file %s", resourcePath.toUtf8().constData());
         return;
     }
-    if (!tmpFile.open(QFile::ReadOnly)) {
+    if (!tmpFile.open()) {
         qWarning("WARNING: Cannot open a temporary file");
         return;
     }
