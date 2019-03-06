@@ -1,9 +1,14 @@
-- Add doxygen documentations
-- Add support for setting initial cache size
-- Add better error reporting support -- we may use miniz error states
+- Add doxygen documentations.
+- Add support for setting initial cache size.
+- Add better error reporting support -- we may use miniz error states.
 - Improve progress reporting, i.e we should be able to report progress
   for a big chunk of a file, progress reporting should be interrupted
-  less frequently
+  less frequently.
 - Split up compression task into multiple parts and assign each
   individual part into a processor core. Provide better multi-core
   asynchronous compression support.
+- Add support for Qt Resource file and folders on zip and zipSync
+  functions.
+- Add support for other useful compression and extraction operations
+  (e.g. plain old data compression and extraction, or other useful
+  features miniz itself alone offers)
