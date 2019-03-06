@@ -83,3 +83,7 @@ int main(int argc, char* argv[])
     return app.exec();
 }
 ```
+
+
+## Further reading
+Read more info from [here](https://github.com/omergoktas/zipasync/blob/bd5385f0d16b064574d7e57066144f2f26e99416/zipasync.cpp#L496) and [here](https://github.com/omergoktas/zipasync/blob/bd5385f0d16b064574d7e57066144f2f26e99416/zipasync.cpp#L644)
