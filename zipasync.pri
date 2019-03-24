@@ -22,7 +22,6 @@
 
 CONFIG          += c++14
 
-!darwin:DEFINES += _LARGEFILE64_SOURCE # for miniz
 DEFINES         += ZIPASYNC_INCLUDE_STATIC \
                    MINIZ_NO_ZLIB_APIS \
                    MINIZ_NO_ZLIB_COMPATIBLE_NAMES
