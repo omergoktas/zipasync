@@ -70,7 +70,7 @@ int main(int argc, char* argv[])
             auto result = watcher.resultAt(last);
             if (result == 0)
                 qWarning("Error: %s", watcher.progressText().toUtf8().constData());
-            else
+            else if (!watcher.isCanceled())
                 qWarning("Done: %s entries compressed!", QString::number(result).toUtf8().constData());
         }
         app.quit();
