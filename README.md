@@ -68,11 +68,12 @@ int main(int argc, char* argv[])
         if (watcher.future().resultCount() > 0) {
             int last = watcher.future().resultCount() - 1;
             auto result = watcher.resultAt(last);
-            if (result == 0)
+            if (result == 0) // Succeed
                 qWarning("Error: %s", watcher.progressText().toUtf8().constData());
-            else if (!watcher.isCanceled())
+            else if (!watcher.isCanceled()) // Error occurred
                 qWarning("Done: %s entries compressed!", QString::number(result).toUtf8().constData());
-        }
+            // else -> Canceled, it's handled above anyways
+        } // else -> Do nothing, operation canceled before attempting to do anything
         app.quit();
     });
     // Note: See QTBUG-12152 for QFutureWatcherBase::paused signal
