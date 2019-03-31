@@ -35,20 +35,10 @@ size_t unzipSync(const QString& sourceZipPath, const QString& destinationPath, b
 int main(int argc, char* argv[])
 {
     QApplication app(argc, argv);
-
-    //! Zip recursively the content of a folder asynchronously (except C++ source files)
     QFutureWatcher<size_t> watcher;
-    watcher.setFuture(ZipAsync::zip("/Users/omergoktas/Desktop/SourceFolder",
-                                    "/Users/omergoktas/Desktop/Destination.zip",
-                                    "SomeRootDirectory", ZipAsync::Low, QDir::NoFilter,
-                                    {"*.cpp", "*.cc", "*.cxx"}));
-    if (watcher.isCanceled())
-        return 0;
-
-    qWarning("Compression in progress...");
-
-    //! Pause/resume the zipping task
     QPushButton pauseButton;
+
+    //! A push button to pause/resume the zipping task
     pauseButton.setText("Pause/Resume");
     pauseButton.show();
     QObject::connect(&pauseButton, &QPushButton::clicked, [&] {
@@ -56,30 +46,42 @@ int main(int argc, char* argv[])
         qWarning("Operation %s", watcher.isPaused() ? "paused" : "running");
     });
 
-    //! Catch state changes on the task by connecting appropriate signals to slots
-    QObject::connect(&watcher, &QFutureWatcherBase::resultReadyAt, [&] (int i)
-    { qWarning("%s resolved...", QString::number(watcher.resultAt(i)).toUtf8().constData()); });
-    QObject::connect(&watcher, &QFutureWatcherBase::progressValueChanged, [&]
-    { qWarning("Progress: %d", watcher.progressValue()); });
-    QObject::connect(&watcher, &QFutureWatcherBase::canceled, [&]
+    //! Catch state changes on the task by connecting appropriate signals to the slots
+    // Note: See QTBUG-12152 for QFutureWatcherBase::paused signal
+    QObject::connect(&watcher, &QFutureWatcherBase::resultReadyAt, [&] (int i) // i: index of result
+    { qWarning("%s resolved...", QString::number(watcher.resultAt(i)).toUtf8().data()); });
+    QObject::connect(&watcher, &QFutureWatcherBase::progressValueChanged, [] (int progress)
+    { qWarning("Progress: %d", progress); });
+    QObject::connect(&watcher, &QFutureWatcherBase::canceled, []
     { qWarning("Operation canceled!"); });
-    QObject::connect(&watcher, &QFutureWatcherBase::finished, [&]
-    {
+    QObject::connect(&watcher, &QFutureWatcherBase::finished, [&] {
         if (watcher.future().resultCount() > 0) {
-            int last = watcher.future().resultCount() - 1;
-            auto result = watcher.resultAt(last);
-            if (result == 0) // Error occurred
-                qWarning("Error: %s", watcher.progressText().toUtf8().constData());
+            int lastIndex = watcher.future().resultCount() - 1;
+            auto lastResult = watcher.resultAt(lastIndex);
+            if (lastResult == 0) // Error occurred
+                qWarning("Error: %s", watcher.progressText().toUtf8().data());
             else if (!watcher.isCanceled()) // Succeed
-                qWarning("Done: %s entries compressed!", QString::number(result).toUtf8().constData());
-            // else -> Canceled, it's handled above anyways
-        } // else -> Do nothing, operation canceled before attempting to do anything
+                qWarning("Done: %s entries compressed!", QString::number(lastResult).toUtf8().data());
+            // else -> Do nothing, Operation canceled in the middle
+        } // else -> Do nothing, operation canceled even before attempting to do anything
         app.quit();
     });
-    // Note: See QTBUG-12152 for QFutureWatcherBase::paused signal
 
-    //! Cancel the operation after 1 second
-    // QTimer::singleShot(1000, &watcher, &QFutureWatcher<int>::cancel);
+    //! Zip recursively the content of a folder asynchronously (except C++ source files)
+    // To avoid a race condition, it is important to call this function after doing the connections
+    watcher.setFuture(ZipAsync::zip("/Users/omergoktas/Desktop/SourceFolder",
+                                    "/Users/omergoktas/Desktop/Destination.zip",
+                                    "SomeRootDirectory", ZipAsync::Low, QDir::NoFilter,
+                                    {"*.cpp", "*.cc", "*.cxx"}));
+
+    // Check if it fails even before attempting to do anything (or spawning the worker thread)
+    if (watcher.isCanceled())
+        return EXIT_FAILURE;
+
+    qWarning("Compression in progress...");
+
+    //! (Optional) Cancel the operation after 1 second
+    // QTimer::singleShot(1000, [&] { watcher.cancel(); watcher.waitForFinished(); });
 
     return app.exec();
 }
