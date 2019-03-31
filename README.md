@@ -68,9 +68,9 @@ int main(int argc, char* argv[])
         if (watcher.future().resultCount() > 0) {
             int last = watcher.future().resultCount() - 1;
             auto result = watcher.resultAt(last);
-            if (result == 0) // Succeed
+            if (result == 0) // Error occurred
                 qWarning("Error: %s", watcher.progressText().toUtf8().constData());
-            else if (!watcher.isCanceled()) // Error occurred
+            else if (!watcher.isCanceled()) // Succeed
                 qWarning("Done: %s entries compressed!", QString::number(result).toUtf8().constData());
             // else -> Canceled, it's handled above anyways
         } // else -> Do nothing, operation canceled before attempting to do anything
