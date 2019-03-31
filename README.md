@@ -57,7 +57,7 @@ int main(int argc, char* argv[])
     QObject::connect(&watcher, &QFutureWatcherBase::finished, [&] {
         if (watcher.future().resultCount() > 0) {
             int lastIndex = watcher.future().resultCount() - 1;
-            auto lastResult = watcher.resultAt(lastIndex);
+            size_t lastResult = watcher.resultAt(lastIndex);
             if (lastResult == 0) // Error occurred
                 qWarning("Error: %s", watcher.progressText().toUtf8().data());
             else if (!watcher.isCanceled()) // Succeed
