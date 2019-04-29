@@ -20,14 +20,17 @@
 ##
 ##**************************************************************************
 
-QT      -= gui
-TEMPLATE = lib
-TARGET   = zipasync
-CONFIG  += shared dll strict_c++
+QT          -= gui
+TEMPLATE     = lib
+TARGET       = zipasync
+CONFIG      += shared dll strict_c++
 
-DEFINES += ZIPASYNC_LIBRARY
-DEFINES += QT_DEPRECATED_WARNINGS
-DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000
+DEFINES     += ZIPASYNC_LIBRARY
+DEFINES     += QT_DEPRECATED_WARNINGS
+DEFINES     += QT_DISABLE_DEPRECATED_BEFORE=0x060000
+
+OTHER_FILES += $$PWD/TODO \
+               $$PWD/LICENSE
 
 unix {
     target.path = /usr/lib

@@ -20,10 +20,10 @@
 **
 ****************************************************************************/
 
-#include <zipasync.h>
+#include "zipasync.h"
+#include "miniz.h"
+#include "report.h"
 #include <async.h>
-#include <miniz.h>
-#include <report.h>
 #include <vector>
 
 #include <QFileInfo>
@@ -481,7 +481,9 @@ size_t zipSync(const QString& sourcePath, const QString& destinationZipPath,
         QFile::remove(destinationZipPath);
 
     if (filters == QDir::NoFilter)
-        filters = QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot;
+        filters = QDir::AllEntries | QDir::Hidden;
+
+    filters |= QDir::NoDotAndDotDot;
 
     return Internal::zipSync(sourcePath, destinationZipPath, rootDirectory,
                              nameFilters, filters, compressionLevel, append);
@@ -664,9 +666,11 @@ QFuture<size_t> zip(const QString& sourcePath, const QString& destinationZipPath
         QFile::remove(destinationZipPath);
 
     if (filters == QDir::NoFilter)
-        filters = QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot;
+        filters = QDir::AllEntries | QDir::Hidden;
 
-    return Async::run(Internal::zip, sourcePath, destinationZipPath,
+    filters |= QDir::NoDotAndDotDot;
+
+    return Async::run(QThreadPool::globalInstance(), Internal::zip, sourcePath, destinationZipPath,
                       rootDirectory, nameFilters, filters, compressionLevel, append);
 }
 
@@ -753,7 +757,8 @@ QFuture<size_t> unzip(const QString& sourceZipPath, const QString& destinationPa
         return Internal::invalidFuture();
     }
 
-    return Async::run(Internal::unzip, sourceZipPath, destinationPath, overwrite);
+    return Async::run(QThreadPool::globalInstance(), Internal::unzip,
+                      sourceZipPath, destinationPath, overwrite);
 }
 
 } // ZipAsync

@@ -20,21 +20,21 @@
 ##
 ##**************************************************************************
 
-CONFIG          += c++14
+CONFIG      += c++14
 
-DEFINES         += ZIPASYNC_INCLUDE_STATIC \
-                   MINIZ_NO_ZLIB_APIS \
-                   MINIZ_NO_ZLIB_COMPATIBLE_NAMES
+DEFINES     += ZIPASYNC_INCLUDE_STATIC \
+               MINIZ_NO_ZLIB_APIS \
+               MINIZ_NO_ZLIB_COMPATIBLE_NAMES
 
-DEPENDPATH      += $$PWD
-INCLUDEPATH     += $$PWD
+DEPENDPATH  += $$PWD
+INCLUDEPATH += $$PWD
 
-SOURCES         += $$PWD/miniz.c \
-                   $$PWD/zipasync.cpp
+SOURCES     += $$PWD/miniz.c \
+               $$PWD/zipasync.cpp
 
-HEADERS         += $$PWD/miniz.h \
-                   $$PWD/report.h \
-                   $$PWD/zipasync.h \
-                   $$PWD/zipasync_global.h
+HEADERS     += $$PWD/miniz.h \
+               $$PWD/report.h \
+               $$PWD/zipasync.h \
+               $$PWD/zipasync_global.h
 
 include($$PWD/async/async.pri)

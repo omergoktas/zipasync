@@ -23,7 +23,7 @@
 #ifndef ZIPASYNC_H
 #define ZIPASYNC_H
 
-#include <zipasync_global.h>
+#include "zipasync_global.h"
 #include <QFuture>
 #include <QDir>
 
