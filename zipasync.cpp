@@ -27,7 +27,7 @@
 #include <vector>
 
 #include <QFileInfo>
-#include <QTemporaryFile>
+#include <QTemporaryDir>
 
 namespace ZipAsync {
 
@@ -47,23 +47,16 @@ QFuture<size_t> invalidFuture()
     return future.future();
 }
 
-void copyResourceFile(QString& resourcePath, QTemporaryFile& tmpFile)
+void copyResourceFile(QString& resourcePath, QTemporaryDir& tmpDir)
 {
     if (resourcePath.isEmpty() || resourcePath[0] != QLatin1Char(':'))
         return;
-
-    QFile resourceFile(resourcePath);
-    if (!resourceFile.open(QFile::ReadOnly)) {
-        qWarning("WARNING: Cannot open file %s", resourcePath.toUtf8().constData());
+    const QString& newPath = tmpDir.filePath(QFileInfo(resourcePath).fileName());
+    if (!QFile::copy(resourcePath, newPath)) {
+        qWarning("WARNING: Cannot copy resource file into a temporary location");
         return;
     }
-    if (!tmpFile.open()) {
-        qWarning("WARNING: Cannot open a temporary file");
-        return;
-    }
-    tmpFile.write(resourceFile.readAll());
-    tmpFile.close();
-    resourcePath = tmpFile.fileName();
+    resourcePath = newPath;
 }
 
 QByteArray cleanArchivePath(const QString& rootDirectory, const QString& relativePath)
@@ -186,9 +179,9 @@ size_t zipSync(const QString& sourcePath, const QString& destinationZipPath,
 
 size_t unzipSync(const QString& sourceZipPath, const QString& destinationPath, bool overwrite)
 {
-    QTemporaryFile tempFile;
+    QTemporaryDir tempDir;
     QString sourceZipFinalPath(sourceZipPath);
-    copyResourceFile(sourceZipFinalPath, tempFile);
+    copyResourceFile(sourceZipFinalPath, tempDir);
 
     mz_zip_archive zip;
     memset(&zip, 0, sizeof(zip));
@@ -364,9 +357,9 @@ size_t unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath
 {
     INITIALIZE(size_t, futureInterface)
 
-    QTemporaryFile tempFile;
+    QTemporaryDir tempDir;
     QString sourceZipFinalPath(sourceZipPath);
-    copyResourceFile(sourceZipFinalPath, tempFile);
+    copyResourceFile(sourceZipFinalPath, tempDir);
 
     mz_zip_archive zip;
     memset(&zip, 0, sizeof(zip));
@@ -398,13 +391,13 @@ size_t unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath
                 if (isBase && QFileInfo::exists(destinationPath + '/' + fileStat.m_filename)) {
                     mz_zip_reader_end(&zip);
                     CRASH("ZipAsync", "Extraction canceled, dir already exists: %1.",
-                                     destinationPath + '/' + fileStat.m_filename)
+                          destinationPath + '/' + fileStat.m_filename)
                 }
             }
             if (!QDir(destinationPath).mkpath(fileStat.m_filename)) {
                 mz_zip_reader_end(&zip);
                 CRASH("ZipAsync", "Directory creation on disk is failed for: %1.",
-                                 destinationPath + '/' + fileStat.m_filename)
+                      destinationPath + '/' + fileStat.m_filename)
             }
             processedEntryCount++;
             REPORT_PROGRESS_SAFE(100 * processedEntryCount / numberOfEntries, zip)
@@ -428,7 +421,7 @@ size_t unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath
                 if (isBase && QFileInfo::exists(destinationPath + '/' + fileStat.m_filename)) {
                     mz_zip_reader_end(&zip);
                     CRASH("ZipAsync", "Extraction canceled, file already exists: %1.",
-                                     destinationPath + '/' + fileStat.m_filename)
+                          destinationPath + '/' + fileStat.m_filename)
                 }
             }
             if (!mz_zip_reader_extract_to_file(

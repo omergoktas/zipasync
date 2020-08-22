@@ -39,19 +39,19 @@ enum CompressionLevel {
     Ultra         = 10
 };
 
-size_t zipSync(const QString& sourcePath, const QString& destinationZipPath,
-               const QString& rootDirectory = QString(), CompressionLevel compressionLevel = Medium,
-               QDir::Filters filters = QDir::NoFilter, const QStringList& nameFilters = {},
-               bool append = true);
+size_t ZIPASYNC_EXPORT zipSync(const QString& sourcePath, const QString& destinationZipPath,
+                               const QString& rootDirectory = QString(), CompressionLevel compressionLevel = Medium,
+                               QDir::Filters filters = QDir::NoFilter, const QStringList& nameFilters = {},
+                               bool append = true);
 
-size_t unzipSync(const QString& sourceZipPath, const QString& destinationPath, bool overwrite = false);
+size_t ZIPASYNC_EXPORT unzipSync(const QString& sourceZipPath, const QString& destinationPath, bool overwrite = false);
 
-QFuture<size_t> zip(const QString& sourcePath, const QString& destinationZipPath,
-                    const QString& rootDirectory = QString(), CompressionLevel compressionLevel = Medium,
-                    QDir::Filters filters = QDir::NoFilter, const QStringList& nameFilters = {},
-                    bool append = true);
+QFuture<size_t> ZIPASYNC_EXPORT zip(const QString& sourcePath, const QString& destinationZipPath,
+                                    const QString& rootDirectory = QString(), CompressionLevel compressionLevel = Medium,
+                                    QDir::Filters filters = QDir::NoFilter, const QStringList& nameFilters = {},
+                                    bool append = true);
 
-QFuture<size_t> unzip(const QString& sourceZipPath, const QString& destinationPath, bool overwrite = false);
+QFuture<size_t> ZIPASYNC_EXPORT unzip(const QString& sourceZipPath, const QString& destinationPath, bool overwrite = false);
 
 } // ZipAsync
 
