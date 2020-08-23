@@ -21,15 +21,12 @@
 ##**************************************************************************
 
 CONFIG      += c++14
-
 DEFINES     += ZIPASYNC_INCLUDE_STATIC \
                MINIZ_NO_ZLIB_APIS \
                MINIZ_NO_ZLIB_COMPATIBLE_NAMES
-
-DEPENDPATH  += $$PWD
 INCLUDEPATH += $$PWD
 
-SOURCES     += $$PWD/miniz.c \
+SOURCES     += $$PWD/miniz.cpp \
                $$PWD/zipasync.cpp
 
 HEADERS     += $$PWD/miniz.h \

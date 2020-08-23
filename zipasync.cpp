@@ -188,7 +188,7 @@ size_t unzipSync(const QString& sourceZipPath, const QString& destinationPath, b
     if (!mz_zip_reader_init_file_v2(&zip, sourceZipFinalPath.toUtf8().constData(), 0, 0, 0))
         WARNING("Couldn't initialize a zip reader.")
 
-    size_t numberOfEntries = mz_zip_reader_get_num_files(&zip);
+    mz_uint numberOfEntries = mz_zip_reader_get_num_files(&zip);
 
     if (numberOfEntries == 0) {
         mz_zip_reader_end(&zip);
@@ -196,7 +196,7 @@ size_t unzipSync(const QString& sourceZipPath, const QString& destinationPath, b
     }
 
     // Iterate for dirs
-    for (size_t i = 0; i < numberOfEntries; ++i) {
+    for (mz_uint i = 0; i < numberOfEntries; ++i) {
         mz_zip_archive_file_stat fileStat;
         if (!mz_zip_reader_file_stat(&zip, i, &fileStat)) {
             mz_zip_reader_end(&zip);
@@ -224,7 +224,7 @@ size_t unzipSync(const QString& sourceZipPath, const QString& destinationPath, b
     }
 
     // Iterate for files
-    for (size_t i = 0; i < numberOfEntries; ++i) {
+    for (mz_uint i = 0; i < numberOfEntries; ++i) {
         mz_zip_archive_file_stat fileStat;
         if (!mz_zip_reader_file_stat(&zip, i, &fileStat)) {
             mz_zip_reader_end(&zip);
@@ -366,8 +366,8 @@ size_t unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath
     if (!mz_zip_reader_init_file_v2(&zip, sourceZipFinalPath.toUtf8().constData(), 0, 0, 0))
         CRASH("ZipAsync", "Couldn't initialize a zip reader.")
 
-    size_t processedEntryCount = 0;
-    size_t numberOfEntries = mz_zip_reader_get_num_files(&zip);
+    mz_uint processedEntryCount = 0;
+    mz_uint numberOfEntries = mz_zip_reader_get_num_files(&zip);
 
     if (numberOfEntries == 0) {
         mz_zip_reader_end(&zip);
@@ -375,7 +375,7 @@ size_t unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath
     }
 
     // Iterate for dirs
-    for (size_t i = 0; i < numberOfEntries; ++i) {
+    for (mz_uint i = 0; i < numberOfEntries; ++i) {
         mz_zip_archive_file_stat fileStat;
         if (!mz_zip_reader_file_stat(&zip, i, &fileStat)) {
             mz_zip_reader_end(&zip);
@@ -405,7 +405,7 @@ size_t unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath
     }
 
     // Iterate for files
-    for (size_t i = 0; i < numberOfEntries; ++i) {
+    for (mz_uint i = 0; i < numberOfEntries; ++i) {
         mz_zip_archive_file_stat fileStat;
         if (!mz_zip_reader_file_stat(&zip, i, &fileStat)) {
             mz_zip_reader_end(&zip);
@@ -753,5 +753,4 @@ QFuture<size_t> unzip(const QString& sourceZipPath, const QString& destinationPa
     return Async::run(QThreadPool::globalInstance(), Internal::unzip,
                       sourceZipPath, destinationPath, overwrite);
 }
-
 } // ZipAsync

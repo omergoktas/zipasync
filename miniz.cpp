@@ -2417,7 +2417,7 @@ tinfl_status tinfl_decompress(tinfl_decompressor *r, const mz_uint8 *pIn_buf_nex
         TINFL_GET_BYTE(2, r->m_zhdr1);
         counter = (((r->m_zhdr0 * 256 + r->m_zhdr1) % 31 != 0) || (r->m_zhdr1 & 32) || ((r->m_zhdr0 & 15) != 8));
         if (!(decomp_flags & TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF))
-            counter |= (((1U << (8U + (r->m_zhdr0 >> 4))) > 32768U) || ((out_buf_size_mask + 1) < (size_t)(1U << (8U + (r->m_zhdr0 >> 4)))));
+            counter |= (((1U << (8U + (r->m_zhdr0 >> 4))) > 32768U) || ((out_buf_size_mask + 1) < (size_t(1U) << (8U + (r->m_zhdr0 >> 4)))));
         if (counter)
         {
             TINFL_CR_RETURN_FOREVER(36, TINFL_STATUS_FAILED);
@@ -2987,22 +2987,44 @@ extern "C" {
 #include <sys/stat.h>
 
 #if defined(_MSC_VER) || defined(__MINGW64__)
+extern "C++" {
+#include <QString>
 static FILE *mz_fopen(const char *pFilename, const char *pMode)
 {
     FILE *pFile = NULL;
-    fopen_s(&pFile, pFilename, pMode);
+    const std::wstring fileName(QString::fromUtf8(pFilename).toStdWString());
+    const std::wstring mode(QString::fromUtf8(pMode).toStdWString());
+    _wfopen_s(&pFile, fileName.c_str(), mode.c_str());
     return pFile;
 }
 static FILE *mz_freopen(const char *pPath, const char *pMode, FILE *pStream)
 {
     FILE *pFile = NULL;
-    if (freopen_s(&pFile, pPath, pMode, pStream))
+    const std::wstring path(QString::fromUtf8(pPath).toStdWString());
+    const std::wstring mode(QString::fromUtf8(pMode).toStdWString());
+    if (_wfreopen_s(&pFile, path.c_str(), mode.c_str(), pStream))
         return NULL;
     return pFile;
 }
+static int mz_stat(const char *pFilename, struct _stat64* pStat)
+{
+    const std::wstring fileName(QString::fromUtf8(pFilename).toStdWString());
+    return _wstat64(fileName.c_str(), pStat);
+}
+static int mz_remove(const char *pFilename)
+{
+    const std::wstring fileName(QString::fromUtf8(pFilename).toStdWString());
+    return _wremove(fileName.c_str());
+}
 #ifndef MINIZ_NO_TIME
 #include <sys/utime.h>
+static int mz_utime(const char *pFilename, struct utimbuf* const pTime)
+{
+    const std::wstring fileName(QString::fromUtf8(pFilename).toStdWString());
+    return _wutime(fileName.c_str(), (struct _utimbuf*)pTime);
+}
 #endif
+} // extern "C++"
 #define MZ_FOPEN mz_fopen
 #define MZ_FCLOSE fclose
 #define MZ_FREAD fread
@@ -3010,25 +3032,55 @@ static FILE *mz_freopen(const char *pPath, const char *pMode, FILE *pStream)
 #define MZ_FTELL64 _ftelli64
 #define MZ_FSEEK64 _fseeki64
 #define MZ_FILE_STAT_STRUCT _stat64
-#define MZ_FILE_STAT _stat64
+#define MZ_FILE_STAT mz_stat
 #define MZ_FFLUSH fflush
 #define MZ_FREOPEN mz_freopen
-#define MZ_DELETE_FILE remove
+#define MZ_DELETE_FILE mz_remove
 #elif defined(__MINGW32__)
+extern "C++" {
+#include <QString>
+static FILE *mz_fopen(const char *pFilename, const char *pMode)
+{
+    const std::wstring fileName(QString::fromUtf8(pFilename).toStdWString());
+    const std::wstring mode(QString::fromUtf8(pMode).toStdWString());
+    return _wfopen(fileName.c_str(), mode.c_str());
+}
+static FILE *mz_freopen(const char *pPath, const char *pMode, FILE *pStream)
+{
+    const std::wstring path(QString::fromUtf8(pPath).toStdWString());
+    const std::wstring mode(QString::fromUtf8(pMode).toStdWString());
+    return _wfreopen(path.c_str(), mode.c_str(), pStream);
+}
+static int mz_stat(const char *pFilename, struct _stat* pStat)
+{
+    const std::wstring fileName(QString::fromUtf8(pFilename).toStdWString());
+    return _wstat(fileName.c_str(), pStat);
+}
+static int mz_remove(const char *pFilename)
+{
+    const std::wstring fileName(QString::fromUtf8(pFilename).toStdWString());
+    return _wremove(fileName.c_str());
+}
 #ifndef MINIZ_NO_TIME
 #include <sys/utime.h>
+static int mz_utime(const char *pFilename, struct utimbuf* const pTime)
+{
+    const std::wstring fileName(QString::fromUtf8(pFilename).toStdWString());
+    return _wutime(fileName.c_str(), (struct _utimbuf*)pTime);
+}
 #endif
-#define MZ_FOPEN(f, m) fopen(f, m)
+} // extern "C++"
+#define MZ_FOPEN mz_fopen
 #define MZ_FCLOSE fclose
 #define MZ_FREAD fread
 #define MZ_FWRITE fwrite
 #define MZ_FTELL64 ftello64
 #define MZ_FSEEK64 fseeko64
 #define MZ_FILE_STAT_STRUCT _stat
-#define MZ_FILE_STAT _stat
+#define MZ_FILE_STAT mz_stat
 #define MZ_FFLUSH fflush
-#define MZ_FREOPEN(f, m, s) freopen(f, m, s)
-#define MZ_DELETE_FILE remove
+#define MZ_FREOPEN mz_freopen
+#define MZ_DELETE_FILE mz_remove
 #elif defined(__TINYC__)
 #ifndef MINIZ_NO_TIME
 #include <sys/utime.h>
@@ -3227,6 +3279,7 @@ struct mz_zip_internal_state_tag
 #if defined(DEBUG) || defined(_DEBUG) || defined(NDEBUG)
 static MZ_FORCEINLINE mz_uint mz_zip_array_range_check(const mz_zip_array *pArray, mz_uint index)
 {
+    (void)pArray;
     MZ_ASSERT(index < pArray->m_size);
     return index;
 }
@@ -3363,8 +3416,11 @@ static mz_bool mz_zip_set_file_times(const char *pFilename, MZ_TIME_T access_tim
     memset(&t, 0, sizeof(t));
     t.actime = access_time;
     t.modtime = modified_time;
-
+#if defined(_MSC_VER) || defined(__MINGW64__) || defined(__MINGW32__)
+    return !mz_utime(pFilename, &t);
+#else
     return !utime(pFilename, &t);
+#endif
 }
 #endif /* #ifndef MINIZ_NO_STDIO */
 #endif /* #ifndef MINIZ_NO_TIME */
