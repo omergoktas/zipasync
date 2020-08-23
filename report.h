@@ -1,7 +1,7 @@
 #ifndef REPORT_H
 #define REPORT_H
 
-#include <QString>
+#include <QDebug>
 
 #define INITIALIZE(type, futureInterface)                                    \
     auto future = static_cast<QFutureInterface<type>*>(futureInterface);     \
@@ -12,18 +12,6 @@
     future->setProgressValue(100);                                           \
     future->reportResult(result);                                            \
     return result;
-
-#define WARNING(msg, ...) {                                                  \
-    qWarning(msg, ##__VA_ARGS__);                                            \
-    return 0;                                                                \
-}
-
-#define CRASH(context, msg, ...) {                                           \
-    future->setProgressValueAndText(100,                                     \
-    combineStringArguments(QT_TRANSLATE_NOOP(context, msg), ##__VA_ARGS__)); \
-    future->reportResult(size_t(0));                                         \
-    return 0;                                                                \
-}
 
 #define REPORT(progress, result)                                             \
     future->reportResult(result);                                            \
@@ -55,27 +43,33 @@
     }
 
 namespace ZipAsync {
-
 namespace Internal {
-
-inline void combineStringArguments(QString&) {}
+inline QString& combineStringArguments(QString& str) { return str; }
 
 template <typename First, typename... Rest>
-void combineStringArguments(QString& msg, First&& first, Rest&&... rest)
+QString& combineStringArguments(QString& msg, First&& first, Rest&&... rest)
 {
     msg = msg.arg(first);
-    combineStringArguments(msg, rest...);
+    return combineStringArguments(msg, std::forward<Rest>(rest)...);
 }
-
-template <typename... Args>
-QString combineStringArguments(const char* msg, Args&&... args)
-{
-    QString errorString(msg);
-    combineStringArguments(errorString, args...);
-    return errorString;
-}
-
 } // Internal
+
+int WARNING(const char* msg, ...)
+{
+    va_list ap;
+    va_start(ap, msg);
+    qWarning(msg, ap);
+    va_end(ap);
+    return 0;
+}
+
+template <typename Future, typename... Args>
+int CRASH(Future future, QString msg, Args&&... args)
+{
+    future->setProgressValueAndText(100, Internal::combineStringArguments(msg, std::forward<Args>(args)...));
+    future->reportResult(size_t(0));
+    return 0;
+}
 } // ZipAsync
 
 #endif // REPORT_H

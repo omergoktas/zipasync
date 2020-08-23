@@ -120,7 +120,7 @@ size_t zipSync(const QString& sourcePath, const QString& destinationZipPath,
     vector->shrink_to_fit();
 
     if (vector->size() <= 1)
-        WARNING("Nothing to compress, the source directory is empty.")
+        return WARNING("Nothing to compress, the source directory is empty.");
 
     mz_zip_archive zip;
     memset(&zip, 0, sizeof(zip));
@@ -131,15 +131,15 @@ size_t zipSync(const QString& sourcePath, const QString& destinationZipPath,
                     &zip,
                     destinationZipPath.toUtf8().constData(),
                     MZ_ZIP_FLAG_DO_NOT_SORT_CENTRAL_DIRECTORY, 0, 0)) {
-            WARNING("Couldn't initialize a zip reader.")
+            return WARNING("Couldn't initialize a zip reader.");
         }
         if (!mz_zip_writer_init_from_reader_v2(&zip, destinationZipPath.toUtf8().constData(), 0)) {
             mz_zip_reader_end(&zip);
-            WARNING("Couldn't initialize a zip writer.")
+            return WARNING("Couldn't initialize a zip writer.");
         }
     } else {
         if (!mz_zip_writer_init_file_v2(&zip, destinationZipPath.toUtf8().constData(), 0, 0))
-            WARNING("Couldn't initialize a zip writer.")
+            return WARNING("Couldn't initialize a zip writer.");
     }
 
     // Compressing and adding entries
@@ -154,14 +154,14 @@ size_t zipSync(const QString& sourcePath, const QString& destinationZipPath,
             if (!mz_zip_writer_add_mem(&zip, archivePath.constData(), nullptr, 0, 0)) {
                 mz_zip_writer_finalize_archive(&zip);
                 mz_zip_writer_end(&zip);
-                WARNING("Couldn't add a directory entry for: %s.", path.toUtf8().constData())
+                return WARNING("Couldn't add a directory entry for: %s.", path.toUtf8().constData());
             }
         } else {
             if (!mz_zip_writer_add_file(&zip, archivePath, path.toUtf8().constData(),
                                         nullptr, 0, compressionLevel)) {
                 mz_zip_writer_finalize_archive(&zip);
                 mz_zip_writer_end(&zip);
-                WARNING("Couldn't compress the file: %s.", path.toUtf8().constData())
+                return WARNING("Couldn't compress the file: %s.", path.toUtf8().constData());
             }
         }
     }
@@ -169,10 +169,10 @@ size_t zipSync(const QString& sourcePath, const QString& destinationZipPath,
     // Archive finalization
     if (!mz_zip_writer_finalize_archive(&zip)) {
         mz_zip_writer_end(&zip);
-        WARNING("Couldn't finalize the zip writer.")
+        return WARNING("Couldn't finalize the zip writer.");
     }
     if (!mz_zip_writer_end(&zip))
-        WARNING("Couldn't clean the zip writer cache.")
+        return WARNING("Couldn't clean the zip writer cache.");
 
     return vector->size() - 1;
 }
@@ -186,13 +186,13 @@ size_t unzipSync(const QString& sourceZipPath, const QString& destinationPath, b
     mz_zip_archive zip;
     memset(&zip, 0, sizeof(zip));
     if (!mz_zip_reader_init_file_v2(&zip, sourceZipFinalPath.toUtf8().constData(), 0, 0, 0))
-        WARNING("Couldn't initialize a zip reader.")
+        return WARNING("Couldn't initialize a zip reader.");
 
     mz_uint numberOfEntries = mz_zip_reader_get_num_files(&zip);
 
     if (numberOfEntries == 0) {
         mz_zip_reader_end(&zip);
-        WARNING("The archive is either invalid or empty.")
+        return WARNING("The archive is either invalid or empty.");
     }
 
     // Iterate for dirs
@@ -200,25 +200,25 @@ size_t unzipSync(const QString& sourceZipPath, const QString& destinationPath, b
         mz_zip_archive_file_stat fileStat;
         if (!mz_zip_reader_file_stat(&zip, i, &fileStat)) {
             mz_zip_reader_end(&zip);
-            WARNING("Archive is broken.")
+            return WARNING("Archive is broken.");
         }
         if (!fileStat.m_is_supported) {
             mz_zip_reader_end(&zip);
-            WARNING("Archive isn't supported.")
+            return WARNING("Archive isn't supported.");
         }
         if (fileStat.m_is_directory) {
             if (!overwrite) {
                 const bool isBase = QString(fileStat.m_filename).count('/') <= 1;
                 if (isBase && QFileInfo::exists(destinationPath + '/' + fileStat.m_filename)) {
                     mz_zip_reader_end(&zip);
-                    WARNING("Extraction canceled, dir already exists: %s.",
-                            (destinationPath + '/' + fileStat.m_filename).toUtf8().constData())
+                    return WARNING("Extraction canceled, dir already exists: %s.",
+                            (destinationPath + '/' + fileStat.m_filename).toUtf8().constData());
                 }
             }
             if (!QDir(destinationPath).mkpath(fileStat.m_filename)) {
                 mz_zip_reader_end(&zip);
-                WARNING("Directory creation on disk is failed for: %s.",
-                        (destinationPath + '/' + fileStat.m_filename).toUtf8().constData())
+                return WARNING("Directory creation on disk is failed for: %s.",
+                        (destinationPath + '/' + fileStat.m_filename).toUtf8().constData());
             }
         }
     }
@@ -228,33 +228,33 @@ size_t unzipSync(const QString& sourceZipPath, const QString& destinationPath, b
         mz_zip_archive_file_stat fileStat;
         if (!mz_zip_reader_file_stat(&zip, i, &fileStat)) {
             mz_zip_reader_end(&zip);
-            WARNING("Archive is broken.")
+            return WARNING("Archive is broken.");
         }
         if (!fileStat.m_is_supported) {
             mz_zip_reader_end(&zip);
-            WARNING("Archive isn't supported.")
+            return WARNING("Archive isn't supported.");
         }
         if (!fileStat.m_is_directory) {
             if (!overwrite) {
                 const bool isBase = QString(fileStat.m_filename).count('/') < 1;
                 if (isBase && QFileInfo::exists(destinationPath + '/' + fileStat.m_filename)) {
                     mz_zip_reader_end(&zip);
-                    WARNING("Extraction canceled, file already exists: %s.",
-                            (destinationPath + '/' + fileStat.m_filename).toUtf8().constData())
+                    return WARNING("Extraction canceled, file already exists: %s.",
+                            (destinationPath + '/' + fileStat.m_filename).toUtf8().constData());
                 }
             }
             if (!mz_zip_reader_extract_to_file(
                         &zip, i, (destinationPath + '/' + fileStat.m_filename).toUtf8().constData(),
                         0)) {
                 mz_zip_reader_end(&zip);
-                WARNING("Extraction failed, file: %s.",
-                        (destinationPath + '/' + fileStat.m_filename).toUtf8().constData())
+                return WARNING("Extraction failed, file: %s.",
+                        (destinationPath + '/' + fileStat.m_filename).toUtf8().constData());
             }
         }
     }
 
     if (!mz_zip_reader_end(&zip))
-        WARNING("Couldn't clean the zip reader cache.")
+        return WARNING("Couldn't clean the zip reader cache.");
 
     return numberOfEntries;
 }
@@ -288,7 +288,7 @@ size_t zip(QFutureInterfaceBase* futureInterface, const QString& sourcePath,
     vector->shrink_to_fit();
 
     if (vector->size() <= 1)
-        CRASH("ZipAsync", "Nothing to compress, the source directory is empty.")
+        return CRASH(future, "Nothing to compress, the source directory is empty.");
 
     REPORT(1, vector->size() - 1)
 
@@ -303,15 +303,15 @@ size_t zip(QFutureInterfaceBase* futureInterface, const QString& sourcePath,
                     &zip,
                     destinationZipPath.toUtf8().constData(),
                     MZ_ZIP_FLAG_DO_NOT_SORT_CENTRAL_DIRECTORY, 0, 0)) {
-            CRASH("ZipAsync", "Couldn't initialize a zip reader.")
+            return CRASH(future, "Couldn't initialize a zip reader.");
         }
         if (!mz_zip_writer_init_from_reader_v2(&zip, destinationZipPath.toUtf8().constData(), 0)) {
             mz_zip_reader_end(&zip);
-            CRASH("ZipAsync", "Couldn't initialize a zip writer.")
+            return CRASH(future, "Couldn't initialize a zip writer.");
         }
     } else {
         if (!mz_zip_writer_init_file_v2(&zip, destinationZipPath.toUtf8().constData(), 0, 0))
-            CRASH("ZipAsync", "Couldn't initialize a zip writer.")
+            return CRASH(future, "Couldn't initialize a zip writer.");
     }
 
     // Compressing and adding entries
@@ -326,14 +326,14 @@ size_t zip(QFutureInterfaceBase* futureInterface, const QString& sourcePath,
             if (!mz_zip_writer_add_mem(&zip, archivePath.constData(), nullptr, 0, 0)) {
                 mz_zip_writer_finalize_archive(&zip);
                 mz_zip_writer_end(&zip);
-                CRASH("ZipAsync", "Couldn't add a directory entry for: %1.", path)
+                return CRASH(future, "Couldn't add a directory entry for: %1.", path);
             }
         } else {
             if (!mz_zip_writer_add_file(&zip, archivePath, path.toUtf8().constData(),
                                         nullptr, 0, compressionLevel)) {
                 mz_zip_writer_finalize_archive(&zip);
                 mz_zip_writer_end(&zip);
-                CRASH("ZipAsync", "Couldn't compress the file: %1.", path)
+                return CRASH(future, "Couldn't compress the file: %1.", path);
             }
         }
 
@@ -344,10 +344,10 @@ size_t zip(QFutureInterfaceBase* futureInterface, const QString& sourcePath,
     // Archive finalization
     if (!mz_zip_writer_finalize_archive(&zip)) {
         mz_zip_writer_end(&zip);
-        CRASH("ZipAsync", "Couldn't finalize the zip writer.")
+        return CRASH(future, "Couldn't finalize the zip writer.");
     }
     if (!mz_zip_writer_end(&zip))
-        CRASH("ZipAsync", "Couldn't clean the zip writer cache.")
+        return CRASH(future, "Couldn't clean the zip writer cache.");
 
     FINALIZE(vector->size() - 1)
 }
@@ -364,14 +364,14 @@ size_t unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath
     mz_zip_archive zip;
     memset(&zip, 0, sizeof(zip));
     if (!mz_zip_reader_init_file_v2(&zip, sourceZipFinalPath.toUtf8().constData(), 0, 0, 0))
-        CRASH("ZipAsync", "Couldn't initialize a zip reader.")
+        return CRASH(future, "Couldn't initialize a zip reader.");
 
     mz_uint processedEntryCount = 0;
     mz_uint numberOfEntries = mz_zip_reader_get_num_files(&zip);
 
     if (numberOfEntries == 0) {
         mz_zip_reader_end(&zip);
-        CRASH("ZipAsync", "The archive is either invalid or empty.")
+        return CRASH(future, "The archive is either invalid or empty.");
     }
 
     // Iterate for dirs
@@ -379,25 +379,25 @@ size_t unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath
         mz_zip_archive_file_stat fileStat;
         if (!mz_zip_reader_file_stat(&zip, i, &fileStat)) {
             mz_zip_reader_end(&zip);
-            CRASH("ZipAsync", "Archive is broken.")
+            return CRASH(future, "Archive is broken.");
         }
         if (!fileStat.m_is_supported) {
             mz_zip_reader_end(&zip);
-            CRASH("ZipAsync", "Archive isn't supported.")
+            return CRASH(future, "Archive isn't supported.");
         }
         if (fileStat.m_is_directory) {
             if (!overwrite) {
                 const bool isBase = QString(fileStat.m_filename).count('/') <= 1;
                 if (isBase && QFileInfo::exists(destinationPath + '/' + fileStat.m_filename)) {
                     mz_zip_reader_end(&zip);
-                    CRASH("ZipAsync", "Extraction canceled, dir already exists: %1.",
-                          destinationPath + '/' + fileStat.m_filename)
+                    return CRASH(future, "Extraction canceled, dir already exists: %1.",
+                          destinationPath + '/' + fileStat.m_filename);
                 }
             }
             if (!QDir(destinationPath).mkpath(fileStat.m_filename)) {
                 mz_zip_reader_end(&zip);
-                CRASH("ZipAsync", "Directory creation on disk is failed for: %1.",
-                      destinationPath + '/' + fileStat.m_filename)
+                return CRASH(future, "Directory creation on disk is failed for: %1.",
+                      destinationPath + '/' + fileStat.m_filename);
             }
             processedEntryCount++;
             REPORT_PROGRESS_SAFE(100 * processedEntryCount / numberOfEntries, zip)
@@ -409,27 +409,27 @@ size_t unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath
         mz_zip_archive_file_stat fileStat;
         if (!mz_zip_reader_file_stat(&zip, i, &fileStat)) {
             mz_zip_reader_end(&zip);
-            CRASH("ZipAsync", "Archive is broken.")
+            return CRASH(future, "Archive is broken.");
         }
         if (!fileStat.m_is_supported) {
             mz_zip_reader_end(&zip);
-            CRASH("ZipAsync", "Archive isn't supported.")
+            return CRASH(future, "Archive isn't supported.");
         }
         if (!fileStat.m_is_directory) {
             if (!overwrite) {
                 const bool isBase = QString(fileStat.m_filename).count('/') < 1;
                 if (isBase && QFileInfo::exists(destinationPath + '/' + fileStat.m_filename)) {
                     mz_zip_reader_end(&zip);
-                    CRASH("ZipAsync", "Extraction canceled, file already exists: %1.",
-                          destinationPath + '/' + fileStat.m_filename)
+                    return CRASH(future, "Extraction canceled, file already exists: %1.",
+                          destinationPath + '/' + fileStat.m_filename);
                 }
             }
             if (!mz_zip_reader_extract_to_file(
                         &zip, i, (destinationPath + '/' + fileStat.m_filename).toUtf8().constData(),
                         0)) {
                 mz_zip_reader_end(&zip);
-                CRASH("ZipAsync", "Extraction failed, file: %1.",
-                      destinationPath + '/' + fileStat.m_filename)
+                return CRASH(future, "Extraction failed, file: %1.",
+                      destinationPath + '/' + fileStat.m_filename);
             }
             processedEntryCount++;
             REPORT_PROGRESS_SAFE(100 * processedEntryCount / numberOfEntries, zip)
@@ -437,7 +437,7 @@ size_t unzip(QFutureInterfaceBase* futureInterface, const QString& sourceZipPath
     }
 
     if (!mz_zip_reader_end(&zip))
-        CRASH("ZipAsync", "Couldn't clean the zip reader cache.")
+        return CRASH(future, "Couldn't clean the zip reader cache.");
 
     FINALIZE(processedEntryCount)
 }
