@@ -21,9 +21,11 @@
 ##**************************************************************************
 
 CONFIG      += c++14
-DEFINES     += ZIPASYNC_INCLUDE_STATIC \
+DEFINES     += ASYNC_LIBRARY \
+               ZIPASYNC_INCLUDE_STATIC \
                MINIZ_NO_ZLIB_APIS \
                MINIZ_NO_ZLIB_COMPATIBLE_NAMES
+
 INCLUDEPATH += $$PWD
 
 SOURCES     += $$PWD/miniz.cpp \
